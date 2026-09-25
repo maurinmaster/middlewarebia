@@ -35,17 +35,8 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
       </div>
     </div>
     <div class="header-actions">
-      <button class="btn btn-primary" onclick="openManualSendModal()" style="background: linear-gradient(135deg, #3b82f6, #1d4ed8); box-shadow: 0 4px 14px rgba(59, 130, 246, 0.3);">
-        📤 Enviar Produto Manual
-      </button>
-      <button class="btn btn-secondary" onclick="openTestWebhookModal()">
-        🧪 Testar Webhook
-      </button>
-      <button class="btn btn-primary" onclick="importEGestorToNuvemshop()" style="background: linear-gradient(135deg, #10b981, #059669); box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);">
-        🚀 Importar eGestor ➔ Nuvemshop
-      </button>
-      <button class="btn btn-secondary" onclick="openCreateProductModal()">
-        ➕ Inserir Produto
+      <button class="btn btn-primary" onclick="openSyncModal()" style="background: linear-gradient(135deg, #10b981, #059669); box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3); font-weight: 600; padding: 10px 22px;">
+        🔄 Sincronizar
       </button>
       <button class="btn btn-secondary" onclick="openSettingsModal()" title="Configurações">
         ⚙️
@@ -115,11 +106,27 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
   <!-- Tab 1: Produtos na Nuvemshop -->
   <div id="tab-products" class="tab-content active">
     <div class="table-container">
-      <div class="table-header">
+      <div class="table-header" style="flex-wrap: wrap; gap: 12px;">
         <div style="font-weight: 600; font-size: 15px;">Produtos Ativos na Nuvemshop</div>
-        <div style="display: flex; gap: 10px; align-items: center;">
-          <input type="text" id="search-products" class="search-input" placeholder="🔍 Buscar por SKU, Nome ou Código de Barras...">
-          <button class="btn btn-secondary btn-sm" onclick="loadProducts()">Atualizar Lista</button>
+        <div class="filter-bar">
+          <input type="text" id="search-products" class="search-input" placeholder="🔍 Buscar SKU, Nome ou Barras..." style="min-width: 220px;" oninput="debounceLoadProducts()">
+          
+          <select id="filter-products-stock" class="search-input" style="min-width: 160px;" onchange="loadProducts()">
+            <option value="all">📦 Todo Estoque</option>
+            <option value="has_stock">✅ Com Estoque (&gt; 0)</option>
+            <option value="zero_stock">🛑 Sem Estoque (= 0)</option>
+            <option value="low_stock">⚠️ Estoque Baixo (1 a 3)</option>
+          </select>
+
+          <select id="filter-products-status" class="search-input" style="min-width: 150px;" onchange="loadProducts()">
+            <option value="all">⚡ Todos os Status</option>
+            <option value="synced">🟢 Sincronizado</option>
+            <option value="pending">🟡 Pendente</option>
+            <option value="error">🔴 Com Erro</option>
+          </select>
+
+          <button class="btn btn-secondary btn-sm" onclick="resetProductsFilters()">Limpar</button>
+          <button class="btn btn-primary btn-sm" onclick="loadProducts()">Atualizar</button>
         </div>
       </div>
       <table>
@@ -151,14 +158,23 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
             Veja quais produtos do eGestor ainda não estão na Nuvemshop. Envie qualquer produto manualmente ou retire produtos da loja online com 1 clique (o eGestor nunca é alterado).
           </div>
         </div>
-        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-          <input type="text" id="search-visor" class="search-input" placeholder="🔍 Filtrar por Nome, SKU ou Código..." style="width: 260px;" onkeydown="if(event.key==='Enter') loadVisorProducts(1)">
+        <div class="filter-bar">
+          <input type="text" id="search-visor" class="search-input" placeholder="🔍 Filtrar por Nome, SKU ou Código..." style="min-width: 220px;" onkeydown="if(event.key==='Enter') loadVisorProducts(1)">
           
-          <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #fff; cursor: pointer; background: rgba(255,255,255,0.05); padding: 7px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
-            <input type="checkbox" id="check-visor-only-missing" checked onchange="loadVisorProducts(1)">
-            <span>Apenas NÃO enviados para a Nuvemshop</span>
-          </label>
+          <select id="filter-visor-status" class="search-input" style="min-width: 190px;" onchange="loadVisorProducts(1)">
+            <option value="missing" selected>⚠️ Não enviados para Nuvem</option>
+            <option value="in_nuvem">✅ Já enviados para a Nuvem</option>
+            <option value="all">⚡ Todos os produtos do eGestor</option>
+          </select>
 
+          <select id="filter-visor-stock" class="search-input" style="min-width: 160px;" onchange="loadVisorProducts(1)">
+            <option value="all">📦 Todo Estoque</option>
+            <option value="has_stock">✅ Com Estoque (&gt; 0)</option>
+            <option value="zero_stock">🛑 Sem Estoque (= 0)</option>
+            <option value="low_stock">⚠️ Estoque Baixo (1 a 3)</option>
+          </select>
+
+          <button class="btn btn-secondary btn-sm" onclick="resetVisorFilters()">Limpar</button>
           <button class="btn btn-primary btn-sm" onclick="loadVisorProducts(1)">Buscar</button>
         </div>
       </div>

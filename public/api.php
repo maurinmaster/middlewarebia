@@ -58,21 +58,41 @@ try {
 
         case 'products':
             $search = trim($_GET['search'] ?? '');
-            $limit = min(100, max(10, (int)($_GET['limit'] ?? 50)));
+            $limit = min(300, max(10, (int)($_GET['limit'] ?? 100)));
+            $stockFilter = $_GET['stock'] ?? 'all';
+            $statusFilter = $_GET['status'] ?? 'all';
+
+            $where = ["(status != 'removed_from_nuvem' OR status IS NULL)"];
+            $params = [];
 
             if ($search !== '') {
-                $stmt = $db->prepare("SELECT * FROM product_mappings WHERE name LIKE :q OR sku LIKE :q OR barcode LIKE :q ORDER BY id DESC LIMIT :lim");
-                $stmt->bindValue(':q', "%{$search}%", PDO::PARAM_STR);
-                $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
-                $stmt->execute();
-            } else {
-                $stmt = $db->prepare("SELECT * FROM product_mappings ORDER BY id DESC LIMIT :lim");
-                $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
-                $stmt->execute();
+                $where[] = "(name LIKE :q OR sku LIKE :q OR barcode LIKE :q)";
+                $params[':q'] = "%{$search}%";
             }
 
+            if ($stockFilter === 'has_stock') {
+                $where[] = "stock_nuvemshop > 0";
+            } elseif ($stockFilter === 'zero_stock') {
+                $where[] = "stock_nuvemshop <= 0";
+            } elseif ($stockFilter === 'low_stock') {
+                $where[] = "stock_nuvemshop > 0 AND stock_nuvemshop <= 3";
+            }
+
+            if ($statusFilter !== 'all' && $statusFilter !== '') {
+                $where[] = "status = :status";
+                $params[':status'] = $statusFilter;
+            }
+
+            $whereSql = implode(' AND ', $where);
+            $stmt = $db->prepare("SELECT * FROM product_mappings WHERE {$whereSql} ORDER BY id DESC LIMIT :lim");
+            foreach ($params as $k => $v) {
+                $stmt->bindValue($k, $v, PDO::PARAM_STR);
+            }
+            $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
+            $stmt->execute();
+
             $products = $stmt->fetchAll();
-            echo json_encode(['success' => true, 'products' => $products]);
+            echo json_encode(['success' => true, 'products' => $products, 'count' => count($products)]);
             break;
 
         case 'logs':
@@ -112,14 +132,22 @@ try {
         case 'egestor_vs_nuvem':
             $page = max(1, (int)($_GET['page'] ?? $_POST['page'] ?? 1));
             $filter = trim($_GET['filter'] ?? $_POST['filter'] ?? '');
-            $onlyMissing = false;
-            if (isset($_GET['only_missing'])) {
-                $onlyMissing = filter_var($_GET['only_missing'], FILTER_VALIDATE_BOOLEAN);
-            } elseif (isset($_POST['only_missing'])) {
-                $onlyMissing = filter_var($_POST['only_missing'], FILTER_VALIDATE_BOOLEAN);
+            
+            // Suporta status: 'all', 'missing', 'in_nuvem'
+            $statusFilter = $_GET['status'] ?? $_POST['status'] ?? null;
+            if ($statusFilter === null) {
+                if (isset($_GET['only_missing']) || isset($_POST['only_missing'])) {
+                    $om = !empty($_GET['only_missing']) || !empty($_POST['only_missing']);
+                    $statusFilter = $om ? 'missing' : 'all';
+                } else {
+                    $statusFilter = 'missing';
+                }
             }
 
-            $result = $syncService->getEGestorVsNuvemProducts($page, $filter, $onlyMissing);
+            // Suporta stock: 'all', 'has_stock', 'zero_stock', 'low_stock'
+            $stockFilter = $_GET['stock'] ?? $_POST['stock'] ?? 'all';
+
+            $result = $syncService->getEGestorVsNuvemProducts($page, $filter, $statusFilter, $stockFilter);
             echo json_encode($result);
             break;
 

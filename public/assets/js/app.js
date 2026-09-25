@@ -131,38 +131,70 @@ async function loadStatus(silent = false) {
     }
 }
 
-async function loadProducts(query = '') {
+let debounceTimerProducts = null;
+function debounceLoadProducts() {
+    clearTimeout(debounceTimerProducts);
+    debounceTimerProducts = setTimeout(() => {
+        loadProducts();
+    }, 300);
+}
+
+function resetProductsFilters() {
+    const s = document.getElementById('search-products');
+    if (s) s.value = '';
+    const st = document.getElementById('filter-products-stock');
+    if (st) st.value = 'all';
+    const sta = document.getElementById('filter-products-status');
+    if (sta) sta.value = 'all';
+    loadProducts();
+}
+
+async function loadProducts() {
     const tableBody = document.getElementById('products-table-body');
     if (!tableBody) return;
 
-    tableBody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-dim);">Carregando produtos...</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 25px;">Carregando produtos...</td></tr>';
+
+    const searchInput = document.getElementById('search-products');
+    const query = searchInput ? searchInput.value.trim() : '';
+    const stockEl = document.getElementById('filter-products-stock');
+    const stock = stockEl ? stockEl.value : 'all';
+    const statusEl = document.getElementById('filter-products-status');
+    const status = statusEl ? statusEl.value : 'all';
 
     try {
-        const url = query ? `api.php?action=products&search=${encodeURIComponent(query)}` : 'api.php?action=products';
-        const res = await fetch(url);
+        const params = new URLSearchParams({ action: 'products' });
+        if (query) params.append('search', query);
+        if (stock !== 'all') params.append('stock', stock);
+        if (status !== 'all') params.append('status', status);
+
+        const res = await fetch(`api.php?${params.toString()}`);
         const data = await res.json();
 
         if (data.success && data.products.length > 0) {
             tableBody.innerHTML = data.products.map(p => {
-                const stock = parseFloat(p.stock_nuvemshop || 0);
+                const stockVal = parseFloat(p.stock_nuvemshop || 0);
                 let stockClass = 'in-stock';
-                if (stock <= 0) stockClass = 'out-of-stock';
-                else if (stock <= 3) stockClass = 'low-stock';
+                if (stockVal <= 0) stockClass = 'out-of-stock';
+                else if (stockVal <= 3) stockClass = 'low-stock';
 
-                const statusBadge = p.status === 'synced'
-                    ? '<span class="status-badge online"><span class="status-dot"></span> Sincronizado</span>'
-                    : '<span class="status-badge warning"><span class="status-dot"></span> Pendente</span>';
+                let statusBadge = '<span class="status-badge warning"><span class="status-dot"></span> Pendente</span>';
+                if (p.status === 'synced') {
+                    statusBadge = '<span class="status-badge online"><span class="status-dot"></span> Sincronizado</span>';
+                } else if (p.status === 'error') {
+                    statusBadge = '<span class="status-badge offline"><span class="status-dot"></span> Erro</span>';
+                }
 
                 return `
                     <tr>
                         <td><strong>${p.sku || '-'}</strong></td>
                         <td>${p.barcode || '-'}</td>
                         <td>${escapeHtml(p.name)}</td>
-                        <td><span class="stock-tag ${stockClass}">${stock} un</span></td>
+                        <td><span class="stock-tag ${stockClass}">${stockVal} un</span></td>
                         <td>${p.price ? 'R$ ' + parseFloat(p.price).toFixed(2) : '-'}</td>
                         <td>${statusBadge}</td>
                         <td style="text-align: right; white-space: nowrap;">
-                            <button class="btn btn-secondary btn-sm" onclick="syncSingleProduct('${p.egestor_id || p.sku}')" title="Sincronizar estoque agora">
+                            <button class="btn btn-secondary btn-sm" onclick="syncSingleProduct('${p.egestor_id || p.sku}')" title="Sincronizar estoque do eGestor para a Nuvemshop">
                                 🔄 Sincronizar
                             </button>
                             <button class="btn btn-danger btn-sm" style="margin-left: 6px;" onclick="removeProductFromNuvem('${p.nuvemshop_product_id}', '${escapeHtml(p.name)}')" title="Retirar produto da Nuvemshop (o eGestor não é alterado)">
@@ -173,7 +205,7 @@ async function loadProducts(query = '') {
                 `;
             }).join('');
         } else {
-            tableBody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 30px;">Nenhum produto sincronizado ainda. Clique em "Importar da Nuvemshop" ou envie um produto do eGestor.</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 30px;">Nenhum produto encontrado com os filtros selecionados.</td></tr>';
         }
     } catch (err) {
         tableBody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--danger);">Erro ao carregar produtos.</td></tr>';
@@ -499,6 +531,20 @@ async function sendProductToNuvem(codigo, force = true) {
     }
 }
 
+function resetVisorFilters() {
+    const s = document.getElementById('search-visor');
+    if (s) s.value = '';
+    const st = document.getElementById('filter-visor-status');
+    if (st) st.value = 'missing';
+    const sk = document.getElementById('filter-visor-stock');
+    if (sk) sk.value = 'all';
+    loadVisorProducts(1);
+}
+
+function openSyncModal() {
+    importEGestorToNuvemshop();
+}
+
 // Vizor: Carrega lista comparativa eGestor vs Nuvemshop
 window.currentVisorPage = 1;
 async function loadVisorProducts(page = 1) {
@@ -516,12 +562,21 @@ async function loadVisorProducts(page = 1) {
 
     const filterInput = document.getElementById('search-visor');
     const filter = filterInput ? filterInput.value.trim() : '';
-    const onlyMissingCheck = document.getElementById('check-visor-only-missing');
-    const onlyMissing = onlyMissingCheck ? onlyMissingCheck.checked : false;
+    const statusEl = document.getElementById('filter-visor-status');
+    const status = statusEl ? statusEl.value : 'missing';
+    const stockEl = document.getElementById('filter-visor-stock');
+    const stock = stockEl ? stockEl.value : 'all';
 
     try {
-        const url = `api.php?action=egestor_vs_nuvem&page=${page}&filter=${encodeURIComponent(filter)}&only_missing=${onlyMissing ? 1 : 0}`;
-        const res = await fetch(url);
+        const params = new URLSearchParams({
+            action: 'egestor_vs_nuvem',
+            page: page,
+            filter: filter,
+            status: status,
+            stock: stock
+        });
+
+        const res = await fetch(`api.php?${params.toString()}`);
         const data = await res.json();
 
         if (!data.success) {
@@ -535,7 +590,15 @@ async function loadVisorProducts(page = 1) {
         const lastPage = data.last_page || 1;
 
         if (summaryText) {
-            summaryText.innerHTML = `Total de produtos no eGestor: <strong>${totalEGestor.toLocaleString()}</strong> | Exibindo página <strong>${page}</strong> de <strong>${lastPage}</strong>${onlyMissing ? ' &bull; <span style="color:#fde047;">(Filtrando: apenas os que NÃO estão na Nuvemshop)</span>' : ''}`;
+            let filterDesc = [];
+            if (status === 'missing') filterDesc.push('apenas NÃO enviados para Nuvem');
+            else if (status === 'in_nuvem') filterDesc.push('apenas JÁ enviados para Nuvem');
+            if (stock === 'has_stock') filterDesc.push('com estoque > 0');
+            else if (stock === 'zero_stock') filterDesc.push('sem estoque / zerados');
+            else if (stock === 'low_stock') filterDesc.push('estoque baixo');
+
+            const filterStr = filterDesc.length ? ` &bull; <span style="color:#fde047;">(${filterDesc.join(', ')})</span>` : '';
+            summaryText.innerHTML = `Total no eGestor: <strong>${totalEGestor.toLocaleString()}</strong> | Exibindo página <strong>${page}</strong> de <strong>${lastPage}</strong>${filterStr}`;
         }
 
         if (pagInfo) {
@@ -557,15 +620,15 @@ async function loadVisorProducts(page = 1) {
         if (pagBottom) pagBottom.innerHTML = renderPaginationBtns();
 
         if (items.length === 0) {
-            tableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 30px;">Nenhum produto encontrado nesta página ${onlyMissing ? 'com o filtro de ausentes.' : '.'}</td></tr>`;
+            tableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 30px;">Nenhum produto encontrado nesta página com os filtros selecionados.</td></tr>`;
             return;
         }
 
         tableBody.innerHTML = items.map(p => {
-            const stock = parseFloat(p.estoque || 0);
-            let stockBadge = '<span class="stock-tag in-stock">' + stock + ' un</span>';
-            if (stock <= 0) stockBadge = '<span class="stock-tag out-of-stock">0 un</span>';
-            else if (stock <= 3) stockBadge = '<span class="stock-tag low-stock">' + stock + ' un</span>';
+            const stockVal = parseFloat(p.estoque || 0);
+            let stockBadge = '<span class="stock-tag in-stock">' + stockVal + ' un</span>';
+            if (stockVal <= 0) stockBadge = '<span class="stock-tag out-of-stock">0 un</span>';
+            else if (stockVal <= 3) stockBadge = '<span class="stock-tag low-stock">' + stockVal + ' un</span>';
 
             let statusHtml = '';
             let actionHtml = '';

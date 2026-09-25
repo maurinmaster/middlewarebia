@@ -738,7 +738,7 @@ class SyncService {
      * Vizor: Compara catálogo do eGestor com a Nuvemshop.
      * Retorna produtos do eGestor indicando quais já estão na Nuvemshop e quais ainda não foram enviados.
      */
-    public function getEGestorVsNuvemProducts(int $page = 1, string $filter = '', bool $onlyMissing = false): array {
+    public function getEGestorVsNuvemProducts(int $page = 1, string $filter = '', string|bool $statusFilter = 'missing', string $stockFilter = 'all'): array {
         try {
             $params = [];
             if ($filter !== '') {
@@ -758,6 +758,11 @@ class SyncService {
             $lastPage = (int)($res['data']['last_page'] ?? 1);
 
             $db = Database::getConnection();
+
+            // Normaliza statusFilter
+            if (is_bool($statusFilter)) {
+                $statusFilter = $statusFilter ? 'missing' : 'all';
+            }
 
             // Indexa produtos retornados para checar existência no banco local de forma rápida
             $codigos = [];
@@ -805,8 +810,23 @@ class SyncService {
                 $mapping = $mappedByEGestorId[$codigo] ?? ($sku !== '' ? ($mappedBySku[$sku] ?? null) : null);
                 $inNuvem = !empty($mapping['nuvemshop_product_id']);
 
-                if ($onlyMissing && $inNuvem) {
-                    continue; // Pula os que já estão na Nuvemshop se o filtro for apenas ausentes
+                // Filtro de Status na Nuvemshop
+                if ($statusFilter === 'missing' && $inNuvem) {
+                    continue; // Apenas os que NÃO estão na nuvem
+                }
+                if ($statusFilter === 'in_nuvem' && !$inNuvem) {
+                    continue; // Apenas os que JÁ estão na nuvem
+                }
+
+                // Filtro de Estoque no eGestor
+                if ($stockFilter === 'has_stock' && $estoque <= 0) {
+                    continue; // Apenas com estoque > 0
+                }
+                if ($stockFilter === 'zero_stock' && $estoque > 0) {
+                    continue; // Apenas estoque zerado
+                }
+                if ($stockFilter === 'low_stock' && ($estoque <= 0 || $estoque > 3)) {
+                    continue; // Apenas estoque baixo (1 a 3)
                 }
 
                 $items[] = [

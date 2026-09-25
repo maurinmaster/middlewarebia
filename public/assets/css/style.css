@@ -334,19 +334,38 @@ header {
 }
 
 .search-input {
-  background: rgba(0, 0, 0, 0.3);
+  background: rgba(0, 0, 0, 0.35);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  padding: 8px 14px;
+  padding: 8px 12px;
   color: #fff;
   font-size: 13px;
-  min-width: 260px;
   outline: none;
   font-family: inherit;
+  transition: border-color 0.2s ease;
 }
 
 .search-input:focus {
   border-color: var(--primary);
+}
+
+select.search-input {
+  cursor: pointer;
+  background-color: #1e293b;
+  color: #fff;
+  appearance: auto;
+}
+
+select.search-input option {
+  background-color: #0f172a;
+  color: #fff;
+}
+
+.filter-bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
 }
 
 table {
