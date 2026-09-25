@@ -213,6 +213,24 @@ class SyncService {
         // 1. Tratamento de Vendas / Pedidos
         if (str_starts_with($event, 'order/')) {
             $orderId = trim((string)($payload['id'] ?? 'desconhecido'));
+            if ($orderId === 'desconhecido' || $orderId === '') {
+                Logger::warning("Webhook Nuvemshop recebido sem ID de pedido válido.", $payload);
+                return ['success' => false, 'error' => 'ID de pedido ausente'];
+            }
+
+            // Webhooks da Nuvemshop enviam payload enxuto (thin payload: store_id, event, id).
+            // Se o payload não tiver os produtos, busca o pedido completo via API REST da Nuvemshop:
+            if (empty($payload['products'])) {
+                Logger::info("Payload thin recebido para pedido #{$orderId}. Buscando dados completos na API Nuvemshop...");
+                $orderRes = $this->nuvemshop->getOrder($orderId);
+                if ($orderRes['success'] && !empty($orderRes['data'])) {
+                    $payload = $orderRes['data'];
+                } else {
+                    $err = $orderRes['error'] ?? 'Falha ao buscar dados do pedido na Nuvemshop';
+                    Logger::error("Não foi possível carregar pedido #{$orderId}: {$err}");
+                    return ['success' => false, 'error' => $err];
+                }
+            }
 
             // Idempotência: Se já processamos a baixa deste pedido, não baixa duas vezes (evita duplicar com order/created e order/paid)
             if ($event === 'order/created' || $event === 'order/paid') {
@@ -335,15 +353,26 @@ class SyncService {
         }
 
         // 2. Tratamento de alteração de produto na Nuvemshop (NUNCA altera o eGestor)
-        if ($event === 'product/updated' && !empty($payload['variants'])) {
-            foreach ($payload['variants'] as $v) {
-                $sku = trim((string)($v['sku'] ?? ''));
-                $stock = (float)($v['stock'] ?? 0);
+        if ($event === 'product/updated') {
+            $prodId = $payload['id'] ?? null;
+            if ($prodId && empty($payload['variants'])) {
+                Logger::info("Payload thin recebido para produto #{$prodId}. Buscando variantes na API Nuvemshop...");
+                $prodRes = $this->nuvemshop->getProduct($prodId);
+                if ($prodRes['success'] && !empty($prodRes['data']['variants'])) {
+                    $payload['variants'] = $prodRes['data']['variants'];
+                }
+            }
 
-                if ($sku !== '') {
-                    $db = Database::getConnection();
-                    $stmt = $db->prepare("UPDATE product_mappings SET stock_nuvemshop = ?, updated_at = CURRENT_TIMESTAMP WHERE sku = ?");
-                    $stmt->execute([$stock, $sku]);
+            if (!empty($payload['variants'])) {
+                foreach ($payload['variants'] as $v) {
+                    $sku = trim((string)($v['sku'] ?? ''));
+                    $stock = (float)($v['stock'] ?? 0);
+
+                    if ($sku !== '') {
+                        $db = Database::getConnection();
+                        $stmt = $db->prepare("UPDATE product_mappings SET stock_nuvemshop = ?, updated_at = CURRENT_TIMESTAMP WHERE sku = ?");
+                        $stmt->execute([$stock, $sku]);
+                    }
                 }
             }
             $safeMsg = "Evento product/updated recebido da Nuvemshop. Cadastro e estoque do eGestor preservados intactos.";

@@ -82,6 +82,15 @@ class NuvemshopClient {
         return $this->request('GET', "/products/{$productId}");
     }
 
+    public function getOrder(int|string $orderId): array {
+        return $this->request('GET', "/orders/{$orderId}");
+    }
+
+    public function getOrders(int $page = 1, int $perPage = 50, array $params = []): array {
+        $query = http_build_query(array_merge(['page' => $page, 'per_page' => $perPage], $params));
+        return $this->request('GET', '/orders?' . $query);
+    }
+
     /**
      * Procura produto/variante na Nuvemshop por SKU
      */
