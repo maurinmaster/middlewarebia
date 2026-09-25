@@ -1,0 +1,28 @@
+# Arquivos de ambiente e credenciais sensíveis
+.env
+.env.*
+!.env.example
+
+# Bancos de dados locais SQLite e temporários
+data/*.sqlite
+data/*.sqlite-journal
+data/*.sqlite-wal
+data/*.sqlite-shm
+data/*.db
+*.sqlite
+*.db
+
+# Logs do sistema
+data/logs/*
+!data/logs/.gitkeep
+*.log
+
+# Pastas de IDE e SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Testes de chamadas locais com tokens
+tests/test_webhook.php
+tests/test_nuvemshop_sale.php

@@ -1,0 +1,28 @@
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # 1. Bloqueia acesso direto a pastas internas e arquivos sensíveis
+    RewriteRule ^(\.env|\.git|config|src|data|tests) - [F,L,NC]
+
+    # 2. Se a requisição já for para public/, não reescreve
+    RewriteCond %{REQUEST_URI} ^/public/ [NC]
+    RewriteRule ^ - [L]
+
+    # 3. Reescreve todas as outras requisições para a pasta public/
+    RewriteCond %{REQUEST_URI} !^/public/
+    RewriteRule ^(.*)$ public/$1 [L,QSA]
+</IfModule>
+
+# Bloqueio de arquivos com extensões críticas caso mod_rewrite não esteja ativo
+<FilesMatch "^\.|\.(env|sqlite|log|json|md|bat|ps1)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Desativa listagem de diretórios
+Options -Indexes
