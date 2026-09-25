@@ -51,7 +51,8 @@ try {
                     'total_mapped' => $totalMapped,
                     'last_sync' => $lastSync,
                     'errors_24h' => $recentErrors
-                ]
+                ],
+                'sync_only_with_stock' => $syncService->shouldSyncOnlyWithStock()
             ]);
             break;
 
@@ -104,7 +105,12 @@ try {
 
         case 'export_egestor_page':
             $page = max(1, (int)($_POST['page'] ?? $_GET['page'] ?? 1));
-            $onlyStock = !empty($_POST['only_stock']) || !empty($_GET['only_stock']);
+            $onlyStock = null;
+            if (isset($_POST['only_stock'])) {
+                $onlyStock = filter_var($_POST['only_stock'], FILTER_VALIDATE_BOOLEAN);
+            } elseif (isset($_GET['only_stock'])) {
+                $onlyStock = filter_var($_GET['only_stock'], FILTER_VALIDATE_BOOLEAN);
+            }
             @set_time_limit(120);
             $result = $syncService->exportPageFromEGestorToNuvemshop($page, $onlyStock);
             echo json_encode($result);
@@ -113,7 +119,12 @@ try {
         case 'export_egestor_to_nuvem':
             // Importa todo o catálogo do eGestor e envia para a Nuvemshop
             @set_time_limit(600);
-            $onlyStock = !empty($_POST['only_stock']) || !empty($_GET['only_stock']);
+            $onlyStock = null;
+            if (isset($_POST['only_stock'])) {
+                $onlyStock = filter_var($_POST['only_stock'], FILTER_VALIDATE_BOOLEAN);
+            } elseif (isset($_GET['only_stock'])) {
+                $onlyStock = filter_var($_GET['only_stock'], FILTER_VALIDATE_BOOLEAN);
+            }
             $result = $syncService->exportAllFromEGestorToNuvemshop(null, $onlyStock);
             echo json_encode($result);
             break;
@@ -157,7 +168,15 @@ try {
             if ($personalToken !== '') {
                 $egestor->setPersonalToken($personalToken);
             }
-            echo json_encode(['success' => true, 'message' => 'Configurações salvas com sucesso!']);
+            if (isset($_POST['sync_only_with_stock'])) {
+                $syncOnlyWithStock = filter_var($_POST['sync_only_with_stock'], FILTER_VALIDATE_BOOLEAN);
+                $syncService->setSyncOnlyWithStock($syncOnlyWithStock);
+            }
+            echo json_encode([
+                'success' => true,
+                'message' => 'Configurações salvas com sucesso!',
+                'sync_only_with_stock' => $syncService->shouldSyncOnlyWithStock()
+            ]);
             break;
 
         case 'test_webhook':

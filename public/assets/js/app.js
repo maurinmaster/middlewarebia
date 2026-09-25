@@ -116,6 +116,15 @@ async function loadStatus(silent = false) {
             document.getElementById('stat-total-products').textContent = data.stats.total_mapped;
             document.getElementById('stat-last-sync').textContent = data.stats.last_sync ? data.stats.last_sync : 'Nenhuma';
             document.getElementById('stat-errors').textContent = data.stats.errors_24h;
+
+            // Configuração padrão de estoque
+            if (data.sync_only_with_stock !== undefined) {
+                window.syncOnlyWithStock = !!data.sync_only_with_stock;
+                const settingCheck = document.getElementById('input-sync-only-stock');
+                if (settingCheck) settingCheck.checked = window.syncOnlyWithStock;
+                const modalCheck = document.getElementById('check-only-stock');
+                if (modalCheck) modalCheck.checked = window.syncOnlyWithStock;
+            }
         }
     } catch (err) {
         if (!silent) showToast('Erro ao consultar status da API', 'error');
@@ -385,10 +394,13 @@ function closeSettingsModal() {
 async function saveSettings(e) {
     e.preventDefault();
     const token = document.getElementById('input-personal-token').value.trim();
+    const onlyStockEl = document.getElementById('input-sync-only-stock');
+    const onlyStock = onlyStockEl ? onlyStockEl.checked : true;
 
     try {
         const formData = new FormData();
         formData.append('egestor_personal_token', token);
+        formData.append('sync_only_with_stock', onlyStock ? '1' : '0');
 
         const res = await fetch('api.php?action=save_settings', {
             method: 'POST',
@@ -397,7 +409,7 @@ async function saveSettings(e) {
         const data = await res.json();
 
         if (data.success) {
-            showToast('Configurações atualizadas com sucesso!', 'success');
+            showToast('Configurações salvas com sucesso!', 'success');
             closeSettingsModal();
             loadStatus();
         } else {

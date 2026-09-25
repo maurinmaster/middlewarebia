@@ -191,11 +191,24 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
     <form onsubmit="saveSettings(event)">
       <div class="form-group">
         <label>Personal Token do eGestor (Menu Configurações &gt; API):</label>
-        <textarea id="input-personal-token" class="form-control" rows="4" placeholder="Cole o token JWT gerado no eGestor aqui..."></textarea>
+        <textarea id="input-personal-token" class="form-control" rows="3" placeholder="Cole o token JWT gerado no eGestor aqui..."></textarea>
       </div>
+
+      <div class="form-group" style="margin-top: 16px; padding: 14px; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: var(--radius-sm);">
+        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; margin-bottom: 0;">
+          <input type="checkbox" id="input-sync-only-stock" checked style="margin-top: 3px; width: 16px; height: 16px; cursor: pointer;">
+          <div>
+            <strong style="color: #fff; font-size: 13px;">Regra Padrão: Enviar apenas produtos com Estoque &gt; 0 para a Nuvemshop</strong>
+            <p style="font-size: 12px; color: var(--text-dim); margin-top: 4px; line-height: 1.4;">
+              Quando ativado, novos produtos sem estoque ou com estoque negativo no eGestor não poluirão a Nuvemshop. Se um produto já existir na Nuvemshop, o estoque continuará sendo atualizado normalmente.
+            </p>
+          </div>
+        </label>
+      </div>
+
       <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
         <button type="button" class="btn btn-secondary" onclick="closeSettingsModal()">Cancelar</button>
-        <button type="submit" class="btn btn-primary">Salvar Token</button>
+        <button type="submit" class="btn btn-primary">Salvar Configurações</button>
       </div>
     </form>
   </div>

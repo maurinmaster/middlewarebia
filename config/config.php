@@ -44,6 +44,7 @@ return [
     'data_path' => $rootPath . '/data',
     'logs_path' => $rootPath . '/data/logs',
     'app_url'   => rtrim($rawAppUrl, '/'),
+    'sync_only_with_stock' => (getenv('SYNC_ONLY_WITH_STOCK') === false) ? true : filter_var(getenv('SYNC_ONLY_WITH_STOCK'), FILTER_VALIDATE_BOOLEAN),
     
     // Nuvemshop
     'nuvemshop' => [

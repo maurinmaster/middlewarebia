@@ -125,6 +125,14 @@ class SyncService {
 
                 return ['success' => $updateRes['success'], 'message' => $msg, 'nuvemshop_product_id' => $nuvemProductId];
             } else {
+                // Se a regra de enviar apenas com estoque estiver ativa e o estoque for <= 0, não cria na Nuvemshop
+                if ($this->shouldSyncOnlyWithStock() && $estoque <= 0) {
+                    $msg = "Produto '{$nome}' (ID {$codigo}) não enviado para a Nuvemshop pois possui estoque zerado/negativo ({$estoque} un) e a regra de 'Apenas produtos com estoque' está ativada.";
+                    Logger::info($msg);
+                    Database::logSync('egestor', 'skipped_zero_stock', $codigo, $msg, 'info');
+                    return ['success' => true, 'message' => $msg, 'skipped' => true];
+                }
+
                 // Produto NÃO encontrado na Nuvemshop -> Cria automaticamente!
                 Logger::info("Produto do eGestor ({$codigo} - {$nome}) não encontrado na Nuvemshop. Criando novo produto...");
                 $createRes = $this->nuvemshop->createProduct([
@@ -410,7 +418,10 @@ class SyncService {
      * Processa UMA página de produtos do eGestor e envia para a Nuvemshop.
      * Permite execução em lotes via AJAX com feedback e progresso em tempo real no painel.
      */
-    public function exportPageFromEGestorToNuvemshop(int $page = 1, bool $onlyWithStock = false): array {
+    public function exportPageFromEGestorToNuvemshop(int $page = 1, ?bool $onlyWithStock = null): array {
+        if ($onlyWithStock === null) {
+            $onlyWithStock = $this->shouldSyncOnlyWithStock();
+        }
         Logger::info("Buscando página {$page} de produtos no eGestor (Apenas com estoque: " . ($onlyWithStock ? 'Sim' : 'Não') . ")...");
         $res = $this->egestor->getProducts($page);
 
@@ -573,7 +584,10 @@ class SyncService {
     /**
      * Importa/Exporta TODOS os produtos já cadastrados no eGestor para a Nuvemshop em laço sequencial.
      */
-    public function exportAllFromEGestorToNuvemshop(callable $progressCallback = null, bool $onlyWithStock = false): array {
+    public function exportAllFromEGestorToNuvemshop(?callable $progressCallback = null, ?bool $onlyWithStock = null): array {
+        if ($onlyWithStock === null) {
+            $onlyWithStock = $this->shouldSyncOnlyWithStock();
+        }
         Logger::info('Iniciando importação completa de todos os produtos do eGestor para a Nuvemshop...');
 
         $page = 1;
@@ -623,5 +637,24 @@ class SyncService {
             Database::logSync('manual', 'egestor_mass_import_failed', 'all', $err, 'error');
             return ['success' => false, 'error' => $err];
         }
+    }
+
+    /**
+     * Retorna se a regra padrão de sincronizar apenas produtos com estoque > 0 está ativa
+     */
+    public function shouldSyncOnlyWithStock(): bool {
+        $dbVal = Database::getSetting('sync_only_with_stock');
+        if ($dbVal !== null) {
+            return filter_var($dbVal, FILTER_VALIDATE_BOOLEAN);
+        }
+        $envVal = getenv('SYNC_ONLY_WITH_STOCK');
+        return ($envVal === false) ? true : filter_var($envVal, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    /**
+     * Define a regra padrão de sincronização
+     */
+    public function setSyncOnlyWithStock(bool $val): void {
+        Database::setSetting('sync_only_with_stock', $val ? '1' : '0');
     }
 }
