@@ -62,7 +62,9 @@ class SyncService {
 
             $prod = $res['data'];
             $nome        = trim($prod['descricao'] ?? 'Produto ' . $codigo);
-            $sku         = trim($prod['codigoProprio'] ?? (string)$codigo);
+            $rawSku      = trim((string)($prod['codigoProprio'] ?? ''));
+            // Caso não tenha SKU (codigoProprio) no eGestor, usa o código gerado pelo eGestor como SKU na Nuvemshop
+            $sku         = $rawSku !== '' ? $rawSku : (string)$codigo;
             $rawBarcode  = trim($prod['refEanGtin'] ?? '');
             $upperBarcode = strtoupper($rawBarcode);
             $barcode     = ($rawBarcode === '' || $upperBarcode === 'SEM GTIN' || $upperBarcode === 'SEM_GTIN' || $rawBarcode === '0') ? '' : $rawBarcode;
@@ -111,6 +113,10 @@ class SyncService {
                 $updateRes = $this->nuvemshop->updateVariantStock($nuvemProductId, $nuvemVariantId, (int)$estoque);
                 if ($precoVenda > 0) {
                     $this->nuvemshop->updateVariantPrice($nuvemProductId, $nuvemVariantId, $precoVenda);
+                }
+                // Se a variante na Nuvemshop não tiver SKU, preenche com o SKU/código do eGestor
+                if (!empty($searchResult['variant']) && trim((string)($searchResult['variant']['sku'] ?? '')) === '') {
+                    $this->nuvemshop->updateVariant($nuvemProductId, $nuvemVariantId, ['sku' => $sku]);
                 }
                 
                 if ($updateRes['success']) {
@@ -559,6 +565,10 @@ class SyncService {
                 if ($precoVenda > 0) {
                     $this->nuvemshop->updateVariantPrice($nuvemProductId, $nuvemVariantId, $precoVenda);
                 }
+                // Se a variante na Nuvemshop não tiver SKU, preenche com o SKU/código do eGestor
+                if (!empty($search['variant']) && trim((string)($search['variant']['sku'] ?? '')) === '') {
+                    $this->nuvemshop->updateVariant($nuvemProductId, $nuvemVariantId, ['sku' => $sku]);
+                }
 
                 $this->saveMapping([
                     'egestor_id' => $codigo,
@@ -810,8 +820,12 @@ class SyncService {
             $codigos = [];
             $skus = [];
             foreach ($rawProducts as $p) {
-                if (!empty($p['codigo'])) $codigos[] = (string)$p['codigo'];
-                if (!empty($p['codigoProprio'])) $skus[] = trim((string)$p['codigoProprio']);
+                if (!empty($p['codigo'])) {
+                    $c = (string)$p['codigo'];
+                    $codigos[] = $c;
+                    $rawSku = trim((string)($p['codigoProprio'] ?? ''));
+                    $skus[] = $rawSku !== '' ? $rawSku : $c;
+                }
             }
 
             $mappedByEGestorId = [];
@@ -841,7 +855,8 @@ class SyncService {
             $items = [];
             foreach ($rawProducts as $p) {
                 $codigo = (string)($p['codigo'] ?? '');
-                $sku = trim((string)($p['codigoProprio'] ?? ''));
+                $rawSku = trim((string)($p['codigoProprio'] ?? ''));
+                $sku = $rawSku !== '' ? $rawSku : $codigo;
                 $nome = trim((string)($p['descricao'] ?? 'Produto ' . $codigo));
                 $estoque = (float)($p['estoque'] ?? 0);
                 $preco = (float)($p['precoVenda'] ?? 0);

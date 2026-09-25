@@ -193,6 +193,13 @@ class NuvemshopClient {
     }
 
     /**
+     * Atualiza dados de uma variante na Nuvemshop (ex: sku, barcode, price, etc.)
+     */
+    public function updateVariant(int|string $productId, int|string $variantId, array $data): array {
+        return $this->request('PUT', "/products/{$productId}/variants/{$variantId}", $data);
+    }
+
+    /**
      * Cria um novo produto na Nuvemshop
      */
     public function createProduct(array $data): array {
