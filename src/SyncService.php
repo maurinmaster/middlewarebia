@@ -244,9 +244,9 @@ class SyncService {
 
                 $egestorId = null;
 
-                // A) Busca primeiro na tabela local de mapeamentos
-                $stmt = $db->prepare("SELECT * FROM product_mappings WHERE nuvemshop_variant_id = ? OR (sku != '' AND sku = ?) LIMIT 1");
-                $stmt->execute([$nuvemVarId, $sku]);
+                // A) Busca primeiro na tabela local de mapeamentos (por variant_id, product_id, sku ou barcode)
+                $stmt = $db->prepare("SELECT * FROM product_mappings WHERE nuvemshop_variant_id = ? OR nuvemshop_product_id = ? OR (sku != '' AND sku = ?) OR (barcode != '' AND barcode = ?) LIMIT 1");
+                $stmt->execute([(string)$nuvemVarId, (string)$nuvemProdId, $sku, $barcode]);
                 $mapping = $stmt->fetch();
 
                 if ($mapping && !empty($mapping['egestor_id'])) {
@@ -257,6 +257,27 @@ class SyncService {
                     $egestorProd = $this->egestor->findProductBySku($sku);
                     if ($egestorProd && !empty($egestorProd['codigo'])) {
                         $egestorId = (string)$egestorProd['codigo'];
+                    }
+                } elseif ($barcode !== '') {
+                    Logger::info("Buscando produto na API do eGestor pelo Código de Barras: '{$barcode}'...");
+                    $egestorProd = $this->egestor->findProductByBarcode($barcode);
+                    if ($egestorProd && !empty($egestorProd['codigo'])) {
+                        $egestorId = (string)$egestorProd['codigo'];
+                    }
+                }
+
+                // C) Fallback: se não achou por SKU nem código de barras, busca por nome/descrição no eGestor
+                if (!$egestorId && !empty($prodName)) {
+                    Logger::info("Buscando produto no eGestor pelo nome: '{$prodName}'...");
+                    $searchRes = $this->egestor->getProducts(1, ['filtro' => $prodName]);
+                    if ($searchRes['success'] && !empty($searchRes['data']['data'])) {
+                        foreach ($searchRes['data']['data'] as $cand) {
+                            if (mb_strtolower(trim($cand['descricao'])) === mb_strtolower(trim($prodName))) {
+                                $egestorId = (string)$cand['codigo'];
+                                Logger::info("Produto encontrado no eGestor por nome! ID: {$egestorId}");
+                                break;
+                            }
+                        }
                     }
                 }
 
