@@ -224,27 +224,110 @@ async function registerNuvemshopWebhooks() {
     }
 }
 
-async function importEGestorToNuvemshop() {
-    if (!confirm('Deseja importar TODOS os produtos do eGestor para a Nuvemshop?\n\n- Produtos novos serão cadastrados na Nuvemshop (com preço, estoque e fotos).\n- Produtos já existentes terão seu estoque atualizado de acordo com o eGestor.')) {
-        return;
+let isExportRunning = false;
+
+function importEGestorToNuvemshop() {
+    document.getElementById('export-setup-view').style.display = 'block';
+    document.getElementById('export-progress-view').style.display = 'none';
+    document.getElementById('export-egestor-modal').classList.add('active');
+}
+
+function closeExportModal() {
+    if (isExportRunning) {
+        if (!confirm('A importação está em andamento. Deseja realmente fechar e interromper?')) return;
+        isExportRunning = false;
     }
+    document.getElementById('export-egestor-modal').classList.remove('active');
+}
 
-    showToast('Importando catálogo do eGestor para a Nuvemshop... isso pode levar alguns minutos.', 'info');
-    try {
-        const res = await fetch('api.php?action=export_egestor_to_nuvem', { method: 'POST' });
-        const data = await res.json();
+function stopBatchExport() {
+    isExportRunning = false;
+    document.getElementById('export-progress-status').textContent = 'Interrompendo... aguarde a página atual finalizar.';
+}
 
-        if (data.success) {
-            showToast(data.message, 'success');
-            loadProducts();
-            loadStatus(true);
-            loadLogs();
-        } else {
-            showToast('Erro na importação: ' + (data.error || 'Falha'), 'error');
+async function startBatchExport() {
+    const onlyStock = document.getElementById('check-only-stock').checked;
+    isExportRunning = true;
+
+    document.getElementById('export-setup-view').style.display = 'none';
+    document.getElementById('export-progress-view').style.display = 'block';
+
+    let currentPage = 1;
+    let lastPage = 1;
+    let totalProcessed = 0;
+    let totalCreated = 0;
+    let totalUpdated = 0;
+    let totalSkipped = 0;
+
+    const term = document.getElementById('export-live-terminal');
+    term.innerHTML = '<div style="color: #93c5fd;">Iniciando conexão com a API do eGestor e Nuvemshop...</div>';
+
+    while (isExportRunning && currentPage <= lastPage) {
+        document.getElementById('export-progress-status').textContent = `Processando página ${currentPage} de ${lastPage}...`;
+        const pct = Math.round(((currentPage - 1) / Math.max(1, lastPage)) * 100);
+        document.getElementById('export-progress-percent').textContent = `${pct}%`;
+        document.getElementById('export-progress-bar').style.width = `${pct}%`;
+
+        try {
+            const formData = new FormData();
+            formData.append('page', currentPage);
+            if (onlyStock) formData.append('only_stock', '1');
+
+            const res = await fetch('api.php?action=export_egestor_page', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await res.json();
+
+            if (!data.success) {
+                term.innerHTML += `<div style="color: #f87171;">[Erro Pág ${currentPage}] ${data.error || 'Falha ao buscar página'}</div>`;
+                term.scrollTop = term.scrollHeight;
+                break;
+            }
+
+            lastPage = data.last_page || 1;
+            totalProcessed += data.processed || 0;
+            totalCreated += data.created || 0;
+            totalUpdated += data.updated || 0;
+            totalSkipped += data.skipped || 0;
+
+            document.getElementById('cnt-processed').textContent = totalProcessed;
+            document.getElementById('cnt-created').textContent = totalCreated;
+            document.getElementById('cnt-updated').textContent = totalUpdated;
+            document.getElementById('cnt-skipped').textContent = totalSkipped;
+
+            if (data.logs && data.logs.length > 0) {
+                const logsHtml = data.logs.map(l => {
+                    let color = '#d1d5db';
+                    if (l.startsWith('Criado')) color = '#86efac';
+                    if (l.startsWith('Atualizado')) color = '#93c5fd';
+                    if (l.startsWith('Erro')) color = '#f87171';
+                    if (l.startsWith('Ignorado')) color = '#6b7280';
+                    return `<div style="color: ${color};">${escapeHtml(l)}</div>`;
+                }).join('');
+                term.innerHTML += logsHtml;
+                term.scrollTop = term.scrollHeight;
+            }
+
+            currentPage++;
+        } catch (err) {
+            term.innerHTML += `<div style="color: #f87171;">Erro de rede na página ${currentPage}: ${err.message}</div>`;
+            term.scrollTop = term.scrollHeight;
+            break;
         }
-    } catch (err) {
-        showToast('Erro de comunicação ao processar importação.', 'error');
     }
+
+    isExportRunning = false;
+    document.getElementById('export-progress-percent').textContent = '100%';
+    document.getElementById('export-progress-bar').style.width = '100%';
+    document.getElementById('export-progress-status').textContent = 'Importação Finalizada!';
+    document.getElementById('btn-cancel-export').textContent = 'Fechar';
+    document.getElementById('btn-cancel-export').onclick = closeExportModal;
+
+    showToast(`Concluído! ${totalCreated} produtos novos criados, ${totalUpdated} atualizados.`, 'success');
+    loadProducts();
+    loadStatus(true);
+    loadLogs();
 }
 
 async function importFromNuvemshop() {

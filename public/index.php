@@ -262,6 +262,77 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
       </div>
     </form>
   </div>
+<!-- Modal Importação eGestor -> Nuvemshop -->
+<div id="export-egestor-modal" class="modal-overlay">
+  <div class="modal" style="max-width: 650px;">
+    <div class="modal-header">
+      <h3>🚀 Importar Catálogo do eGestor para Nuvemshop</h3>
+      <button class="modal-close" onclick="closeExportModal()">&times;</button>
+    </div>
+    
+    <div id="export-setup-view">
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+        O seu eGestor possui <strong>2.369 produtos</strong> cadastrados. Escolha como deseja importar:
+      </p>
+
+      <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 18px;">
+        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; margin-bottom: 10px;">
+          <input type="checkbox" id="check-only-stock" checked style="margin-top: 3px;">
+          <div>
+            <strong style="color: #fff; font-size: 14px;">Apenas produtos com Estoque &gt; 0 (Recomendado)</strong>
+            <p style="font-size: 12px; color: var(--text-dim); margin-top: 2px;">
+              Evita cadastrar peças antigas/descontinuadas que estão zeradas. Se uma peça já existir na Nuvemshop, o estoque será atualizado normalmente.
+            </p>
+          </div>
+        </label>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 10px;">
+        <button type="button" class="btn btn-secondary" onclick="closeExportModal()">Cancelar</button>
+        <button type="button" class="btn btn-primary" onclick="startBatchExport()">Iniciar Importação</button>
+      </div>
+    </div>
+
+    <div id="export-progress-view" style="display: none;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+        <span id="export-progress-status" style="font-size: 13px; font-weight: 500;">Processando página 1 de 48...</span>
+        <span id="export-progress-percent" style="font-size: 13px; font-weight: 700; color: var(--primary);">0%</span>
+      </div>
+
+      <div style="width: 100%; height: 10px; background: rgba(255,255,255,0.1); border-radius: 5px; overflow: hidden; margin-bottom: 16px;">
+        <div id="export-progress-bar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #6366f1, #10b981); transition: width 0.3s ease;"></div>
+      </div>
+
+      <!-- Contadores -->
+      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; text-align: center;">
+        <div style="background: rgba(0,0,0,0.3); padding: 8px; border-radius: var(--radius-sm);">
+          <div style="font-size: 11px; color: var(--text-dim);">Processados</div>
+          <div style="font-size: 16px; font-weight: 700;" id="cnt-processed">0</div>
+        </div>
+        <div style="background: rgba(16, 185, 129, 0.1); padding: 8px; border-radius: var(--radius-sm); border: 1px solid rgba(16, 185, 129, 0.2);">
+          <div style="font-size: 11px; color: #86efac;">Novos Criados</div>
+          <div style="font-size: 16px; font-weight: 700; color: #10b981;" id="cnt-created">0</div>
+        </div>
+        <div style="background: rgba(99, 102, 241, 0.1); padding: 8px; border-radius: var(--radius-sm); border: 1px solid rgba(99, 102, 241, 0.2);">
+          <div style="font-size: 11px; color: #93c5fd;">Atualizados</div>
+          <div style="font-size: 16px; font-weight: 700; color: #6366f1;" id="cnt-updated">0</div>
+        </div>
+        <div style="background: rgba(245, 158, 11, 0.1); padding: 8px; border-radius: var(--radius-sm); border: 1px solid rgba(245, 158, 11, 0.2);">
+          <div style="font-size: 11px; color: #fde047;">Ignorados (0 est.)</div>
+          <div style="font-size: 16px; font-weight: 700; color: #f59e0b;" id="cnt-skipped">0</div>
+        </div>
+      </div>
+
+      <!-- Live Log Terminal -->
+      <div class="terminal" id="export-live-terminal" style="max-height: 180px; font-size: 11px; margin-bottom: 16px;">
+        Iniciando...
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 10px;">
+        <button type="button" class="btn btn-secondary btn-sm" id="btn-cancel-export" onclick="stopBatchExport()">Interromper</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div class="toast-container" id="toast-container"></div>

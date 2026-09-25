@@ -131,7 +131,10 @@ class NuvemshopClient {
      */
     public function findProductVariantByBarcode(string $barcode): ?array {
         $barcode = trim($barcode);
-        if ($barcode === '') return null;
+        $upper = strtoupper($barcode);
+        if ($barcode === '' || $upper === 'SEM GTIN' || $upper === 'SEM_GTIN' || $barcode === '0') {
+            return null;
+        }
 
         $allRes = $this->getProducts(1, 100);
         if ($allRes['success'] && !empty($allRes['data'])) {

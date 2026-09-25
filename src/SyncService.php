@@ -367,12 +367,17 @@ class SyncService {
     private function saveMapping(array $data): void {
         $db = Database::getConnection();
 
-        // Verifica se já existe por SKU ou IDs
-        $sqlCheck = "SELECT id FROM product_mappings WHERE (sku != '' AND sku = :sku) OR (nuvemshop_variant_id != '' AND nuvemshop_variant_id = :var_id) LIMIT 1";
+        // Verifica se já existe por egestor_id, SKU ou variant_id
+        $egestorId = $data['egestor_id'] ?? '';
+        $sku = $data['sku'] ?? '';
+        $varId = $data['nuvemshop_variant_id'] ?? '';
+
+        $sqlCheck = "SELECT id FROM product_mappings WHERE (egestor_id != '' AND egestor_id = :egestor_id) OR (sku != '' AND sku = :sku) OR (nuvemshop_variant_id != '' AND nuvemshop_variant_id = :var_id) LIMIT 1";
         $stmtCheck = $db->prepare($sqlCheck);
         $stmtCheck->execute([
-            ':sku' => $data['sku'] ?? '',
-            ':var_id' => $data['nuvemshop_variant_id'] ?? ''
+            ':egestor_id' => $egestorId,
+            ':sku' => $sku,
+            ':var_id' => $varId
         ]);
         $existingId = $stmtCheck->fetchColumn();
 
@@ -402,164 +407,216 @@ class SyncService {
     }
 
     /**
-     * Importa/Exporta TODOS os produtos já cadastrados no eGestor para a Nuvemshop.
-     * Varre todas as páginas do eGestor e:
-     * - Se já existir na Nuvemshop (por SKU ou Código de barras): sincroniza estoque e preço.
-     * - Se NÃO existir na Nuvemshop: cadastra automaticamente o produto novo com fotos, preço e estoque.
+     * Processa UMA página de produtos do eGestor e envia para a Nuvemshop.
+     * Permite execução em lotes via AJAX com feedback e progresso em tempo real no painel.
      */
-    public function exportAllFromEGestorToNuvemshop(callable $progressCallback = null): array {
-        Logger::info('Iniciando importação em massa de todos os produtos do eGestor para a Nuvemshop...');
+    public function exportPageFromEGestorToNuvemshop(int $page = 1, bool $onlyWithStock = false): array {
+        Logger::info("Buscando página {$page} de produtos no eGestor (Apenas com estoque: " . ($onlyWithStock ? 'Sim' : 'Não') . ")...");
+        $res = $this->egestor->getProducts($page);
 
-        $page = 1;
-        $totalProcessed = 0;
-        $totalCreated = 0;
-        $totalUpdated = 0;
-        $totalErrors = 0;
+        if (!$res['success'] || empty($res['data'])) {
+            $err = $res['error'] ?? 'Falha ao buscar produtos no eGestor. Verifique o Personal Token.';
+            return ['success' => false, 'error' => $err];
+        }
+
+        $products = $res['data']['data'] ?? [];
+        $lastPage = (int)($res['data']['last_page'] ?? $page);
+        $totalItems = (int)($res['data']['total'] ?? 0);
+
         $db = Database::getConnection();
+        $created = 0;
+        $updated = 0;
+        $skipped = 0;
+        $errors = 0;
+        $itemsLog = [];
 
-        try {
-            do {
-                Logger::info("Buscando página {$page} de produtos no eGestor...");
-                $res = $this->egestor->getProducts($page);
+        foreach ($products as $prod) {
+            $codigo = trim((string)($prod['codigo'] ?? ''));
+            if ($codigo === '') continue;
 
-                if (!$res['success'] || empty($res['data']['data'])) {
-                    if ($page === 1) {
-                        $err = $res['error'] ?? 'Falha ao buscar produtos no eGestor. Verifique o Personal Token.';
-                        return ['success' => false, 'error' => $err];
-                    }
-                    break;
+            $nome = trim($prod['descricao'] ?? 'Produto ' . $codigo);
+            $rawSku = trim((string)($prod['codigoProprio'] ?? ''));
+            $sku = $rawSku !== '' ? $rawSku : $codigo;
+
+            // Filtra e normaliza código de barras (descarta SEM GTIN)
+            $rawBarcode = trim((string)($prod['refEanGtin'] ?? ''));
+            $upperBarcode = strtoupper($rawBarcode);
+            $barcode = ($rawBarcode === '' || $upperBarcode === 'SEM GTIN' || $upperBarcode === 'SEM_GTIN' || $rawBarcode === '0') ? '' : $rawBarcode;
+
+            // Nuvemshop não aceita estoque negativo
+            $estoque = max(0, (float)($prod['estoque'] ?? 0));
+            $precoVenda = (float)($prod['precoVenda'] ?? 0);
+
+            // Imagens do eGestor se houver
+            $images = [];
+            if (!empty($prod['listaImagens']) && is_array($prod['listaImagens'])) {
+                foreach ($prod['listaImagens'] as $imgItem) {
+                    $link = $imgItem['foto']['link'] ?? $imgItem['thumb']['link'] ?? null;
+                    if ($link) $images[] = $link;
+                }
+            }
+
+            // 1. Tenta achar na Nuvemshop (via banco local ou busca por SKU/Barcode real)
+            $stmt = $db->prepare("SELECT * FROM product_mappings WHERE (egestor_id != '' AND egestor_id = ?) OR (sku != '' AND sku = ?) LIMIT 1");
+            $stmt->execute([$codigo, $sku]);
+            $mapping = $stmt->fetch();
+
+            $nuvemProductId = null;
+            $nuvemVariantId = null;
+
+            if ($mapping && !empty($mapping['nuvemshop_product_id']) && !empty($mapping['nuvemshop_variant_id'])) {
+                $nuvemProductId = $mapping['nuvemshop_product_id'];
+                $nuvemVariantId = $mapping['nuvemshop_variant_id'];
+            } else {
+                $search = $this->nuvemshop->findProductVariantBySku($sku);
+                if (!$search && $barcode !== '') {
+                    $search = $this->nuvemshop->findProductVariantByBarcode($barcode);
+                }
+                if ($search) {
+                    $nuvemProductId = $search['product']['id'];
+                    $nuvemVariantId = $search['variant']['id'];
+                }
+            }
+
+            if ($nuvemProductId && $nuvemVariantId) {
+                // Produto JÁ existe na Nuvemshop -> Atualiza estoque e preço
+                $upStock = $this->nuvemshop->updateVariantStock($nuvemProductId, $nuvemVariantId, (int)$estoque);
+                if ($precoVenda > 0) {
+                    $this->nuvemshop->updateVariantPrice($nuvemProductId, $nuvemVariantId, $precoVenda);
                 }
 
-            $products = $res['data']['data'];
-            $lastPage = (int)($res['data']['last_page'] ?? $page);
+                $this->saveMapping([
+                    'egestor_id' => $codigo,
+                    'nuvemshop_product_id' => $nuvemProductId,
+                    'nuvemshop_variant_id' => $nuvemVariantId,
+                    'sku' => $sku,
+                    'barcode' => $barcode,
+                    'name' => $nome,
+                    'stock_egestor' => $estoque,
+                    'stock_nuvemshop' => $estoque,
+                    'price' => $precoVenda,
+                    'status' => $upStock['success'] ? 'synced' : 'error',
+                    'last_sync_direction' => 'egestor_mass_sync'
+                ]);
 
-            foreach ($products as $prod) {
-                $codigo = trim((string)($prod['codigo'] ?? ''));
-                if ($codigo === '') continue;
-
-                $totalProcessed++;
-                $nome = trim($prod['descricao'] ?? 'Produto ' . $codigo);
-                $sku = trim($prod['codigoProprio'] ?? $codigo);
-                $barcode = trim($prod['refEanGtin'] ?? '');
-                $estoque = (float)($prod['estoque'] ?? 0);
-                $precoVenda = (float)($prod['precoVenda'] ?? 0);
-
-                // Imagens do eGestor se houver
-                $images = [];
-                if (!empty($prod['listaImagens']) && is_array($prod['listaImagens'])) {
-                    foreach ($prod['listaImagens'] as $imgItem) {
-                        $link = $imgItem['foto']['link'] ?? $imgItem['thumb']['link'] ?? null;
-                        if ($link) $images[] = $link;
-                    }
-                }
-
-                // 1. Tenta achar na Nuvemshop (via banco local ou busca por SKU/Barcode)
-                $stmt = $db->prepare("SELECT * FROM product_mappings WHERE egestor_id = ? OR (sku != '' AND sku = ?) LIMIT 1");
-                $stmt->execute([$codigo, $sku]);
-                $mapping = $stmt->fetch();
-
-                $nuvemProductId = null;
-                $nuvemVariantId = null;
-
-                if ($mapping && !empty($mapping['nuvemshop_product_id']) && !empty($mapping['nuvemshop_variant_id'])) {
-                    $nuvemProductId = $mapping['nuvemshop_product_id'];
-                    $nuvemVariantId = $mapping['nuvemshop_variant_id'];
+                if ($upStock['success']) {
+                    $updated++;
+                    $itemsLog[] = "Atualizado: {$nome} (SKU {$sku}) - Estoque: {$estoque} un.";
                 } else {
-                    $search = $this->nuvemshop->findProductVariantBySku($sku);
-                    if (!$search && $barcode !== '') {
-                        $search = $this->nuvemshop->findProductVariantByBarcode($barcode);
-                    }
-                    if ($search) {
-                        $nuvemProductId = $search['product']['id'];
-                        $nuvemVariantId = $search['variant']['id'];
-                    }
+                    $errors++;
+                    $itemsLog[] = "Erro ao atualizar: {$nome} (SKU {$sku})";
+                }
+            } else {
+                // Se a opção 'Apenas com estoque' estiver marcada e o produto tiver estoque 0, ignora criação
+                if ($onlyWithStock && $estoque <= 0) {
+                    $skipped++;
+                    $itemsLog[] = "Ignorado (sem estoque): {$nome} (SKU {$sku})";
+                    continue;
                 }
 
-                if ($nuvemProductId && $nuvemVariantId) {
-                    // Produto JÁ existe na Nuvemshop -> Atualiza estoque e preço
-                    $upStock = $this->nuvemshop->updateVariantStock($nuvemProductId, $nuvemVariantId, (int)$estoque);
-                    if ($precoVenda > 0) {
-                        $this->nuvemshop->updateVariantPrice($nuvemProductId, $nuvemVariantId, $precoVenda);
-                    }
+                // Produto NÃO existe na Nuvemshop -> Cria do zero
+                $createRes = $this->nuvemshop->createProduct([
+                    'name' => $nome,
+                    'description' => "Importado do eGestor PDV. Código: {$codigo}",
+                    'sku' => $sku,
+                    'barcode' => $barcode,
+                    'price' => $precoVenda,
+                    'stock' => (int)$estoque,
+                    'images' => $images
+                ]);
+
+                if ($createRes['success'] && !empty($createRes['data']['id'])) {
+                    $newProd = $createRes['data'];
+                    $newVarId = $newProd['variants'][0]['id'] ?? null;
 
                     $this->saveMapping([
                         'egestor_id' => $codigo,
-                        'nuvemshop_product_id' => $nuvemProductId,
-                        'nuvemshop_variant_id' => $nuvemVariantId,
+                        'nuvemshop_product_id' => $newProd['id'],
+                        'nuvemshop_variant_id' => $newVarId,
                         'sku' => $sku,
                         'barcode' => $barcode,
                         'name' => $nome,
                         'stock_egestor' => $estoque,
                         'stock_nuvemshop' => $estoque,
                         'price' => $precoVenda,
-                        'status' => $upStock['success'] ? 'synced' : 'error',
-                        'last_sync_direction' => 'egestor_mass_sync'
+                        'status' => 'synced',
+                        'last_sync_direction' => 'egestor_mass_import'
                     ]);
-
-                    if ($upStock['success']) {
-                        $totalUpdated++;
-                    } else {
-                        $totalErrors++;
-                    }
+                    $created++;
+                    $itemsLog[] = "Criado na Nuvemshop: {$nome} (SKU {$sku}) - Estoque: {$estoque} un.";
                 } else {
-                    // Produto NÃO existe na Nuvemshop -> Cria do zero
-                    $createRes = $this->nuvemshop->createProduct([
-                        'name' => $nome,
-                        'description' => "Importado do eGestor PDV. Código: {$codigo}",
-                        'sku' => $sku,
-                        'barcode' => $barcode,
-                        'price' => $precoVenda,
-                        'stock' => (int)$estoque,
-                        'images' => $images
-                    ]);
-
-                    if ($createRes['success'] && !empty($createRes['data']['id'])) {
-                        $newProd = $createRes['data'];
-                        $newVarId = $newProd['variants'][0]['id'] ?? null;
-
-                        $this->saveMapping([
-                            'egestor_id' => $codigo,
-                            'nuvemshop_product_id' => $newProd['id'],
-                            'nuvemshop_variant_id' => $newVarId,
-                            'sku' => $sku,
-                            'barcode' => $barcode,
-                            'name' => $nome,
-                            'stock_egestor' => $estoque,
-                            'stock_nuvemshop' => $estoque,
-                            'price' => $precoVenda,
-                            'status' => 'synced',
-                            'last_sync_direction' => 'egestor_mass_import'
-                        ]);
-                        $totalCreated++;
-                    } else {
-                        $totalErrors++;
-                        Logger::warning("Erro ao criar produto {$nome} (ID {$codigo}) na Nuvemshop: " . ($createRes['error'] ?? 'Erro'));
-                    }
+                    $errors++;
+                    $errDetail = $createRes['error'] ?? 'Erro desconhecido';
+                    $itemsLog[] = "Erro ao criar: {$nome} (SKU {$sku}) - {$errDetail}";
+                    Logger::warning("Erro ao criar produto {$nome} (ID {$codigo}) na Nuvemshop: {$errDetail}");
                 }
-
-                if ($progressCallback) {
-                    $progressCallback($totalProcessed, $totalCreated, $totalUpdated, $totalErrors, $nome);
-                }
-
-                // Pequena pausa (200ms) para respeitar limits
-                usleep(200000);
             }
 
-            $page++;
-        } while ($page <= $lastPage);
-
-        $summary = "Importação em massa finalizada! Total processados: {$totalProcessed} | Novos criados na Nuvemshop: {$totalCreated} | Atualizados: {$totalUpdated} | Falhas: {$totalErrors}";
-        Logger::info($summary);
-        Database::logSync('manual', 'egestor_mass_import', 'all', $summary, $totalErrors > 0 ? 'warning' : 'success');
+            // Pausa de 150ms entre produtos
+            usleep(150000);
+        }
 
         return [
             'success' => true,
-            'message' => $summary,
-            'total_processed' => $totalProcessed,
-            'total_created' => $totalCreated,
-            'total_updated' => $totalUpdated,
-            'total_errors' => $totalErrors
+            'page' => $page,
+            'last_page' => $lastPage,
+            'total_items' => $totalItems,
+            'processed' => count($products),
+            'created' => $created,
+            'updated' => $updated,
+            'skipped' => $skipped,
+            'errors' => $errors,
+            'logs' => $itemsLog
         ];
+    }
+
+    /**
+     * Importa/Exporta TODOS os produtos já cadastrados no eGestor para a Nuvemshop em laço sequencial.
+     */
+    public function exportAllFromEGestorToNuvemshop(callable $progressCallback = null, bool $onlyWithStock = false): array {
+        Logger::info('Iniciando importação completa de todos os produtos do eGestor para a Nuvemshop...');
+
+        $page = 1;
+        $totalProcessed = 0;
+        $totalCreated = 0;
+        $totalUpdated = 0;
+        $totalErrors = 0;
+        $totalSkipped = 0;
+
+        try {
+            do {
+                $pageRes = $this->exportPageFromEGestorToNuvemshop($page, $onlyWithStock);
+                if (!$pageRes['success']) {
+                    return $pageRes;
+                }
+
+                $totalProcessed += $pageRes['processed'];
+                $totalCreated += $pageRes['created'];
+                $totalUpdated += $pageRes['updated'];
+                $totalErrors += $pageRes['errors'];
+                $totalSkipped += $pageRes['skipped'] ?? 0;
+                $lastPage = $pageRes['last_page'];
+
+                if ($progressCallback) {
+                    $progressCallback($page, $lastPage, $totalProcessed, $totalCreated, $totalUpdated, $totalErrors, $totalSkipped);
+                }
+
+                $page++;
+            } while ($page <= $lastPage);
+
+            $summary = "Importação concluída! Total processados: {$totalProcessed} | Novos na Nuvemshop: {$totalCreated} | Atualizados: {$totalUpdated} | Ignorados (sem estoque): {$totalSkipped} | Falhas: {$totalErrors}";
+            Logger::info($summary);
+            Database::logSync('manual', 'egestor_mass_import', 'all', $summary, $totalErrors > 0 ? 'warning' : 'success');
+
+            return [
+                'success' => true,
+                'message' => $summary,
+                'total_processed' => $totalProcessed,
+                'total_created' => $totalCreated,
+                'total_updated' => $totalUpdated,
+                'total_skipped' => $totalSkipped,
+                'total_errors' => $totalErrors
+            ];
         } catch (\Throwable $e) {
             $err = "Erro ao importar produtos do eGestor: " . $e->getMessage();
             Logger::error($err);

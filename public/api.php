@@ -102,11 +102,19 @@ try {
             echo json_encode($result);
             break;
 
+        case 'export_egestor_page':
+            $page = max(1, (int)($_POST['page'] ?? $_GET['page'] ?? 1));
+            $onlyStock = !empty($_POST['only_stock']) || !empty($_GET['only_stock']);
+            @set_time_limit(120);
+            $result = $syncService->exportPageFromEGestorToNuvemshop($page, $onlyStock);
+            echo json_encode($result);
+            break;
+
         case 'export_egestor_to_nuvem':
             // Importa todo o catálogo do eGestor e envia para a Nuvemshop
-            // Aumenta tempo de execução se necessário
-            @set_time_limit(300);
-            $result = $syncService->exportAllFromEGestorToNuvemshop();
+            @set_time_limit(600);
+            $onlyStock = !empty($_POST['only_stock']) || !empty($_GET['only_stock']);
+            $result = $syncService->exportAllFromEGestorToNuvemshop(null, $onlyStock);
             echo json_encode($result);
             break;
 
