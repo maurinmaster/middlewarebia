@@ -276,39 +276,31 @@ class SyncService {
                             $actionMsg = "Venda Nuvemshop #{$orderId}: Estoque de {$prodName} (SKU {$sku}) baixado de {$currentStock} para {$newStock} no eGestor";
                         }
 
-                        if ($this->canNuvemshopModifyEGestor()) {
-                            // Atualiza o estoque no eGestor somente se explicitamente permitido
-                            $updateRes = $this->egestor->updateProductStock($egestorId, $newStock);
-                            if ($updateRes['success']) {
-                                Logger::info($actionMsg);
-                                Database::logSync('nuvemshop', $actionName, (string)$orderId, $actionMsg, 'success');
+                        // Venda ou Cancelamento na Nuvemshop: atualiza o estoque no eGestor (PDV)
+                        $updateRes = $this->egestor->updateProductStock($egestorId, $newStock);
+                        if ($updateRes['success']) {
+                            Logger::info($actionMsg);
+                            Database::logSync('nuvemshop', $actionName, (string)$orderId, $actionMsg, 'success');
 
-                                // Atualiza mapeamento no banco local
-                                $this->saveMapping([
-                                    'egestor_id' => $egestorId,
-                                    'nuvemshop_product_id' => $nuvemProdId,
-                                    'nuvemshop_variant_id' => $nuvemVarId,
-                                    'sku' => $sku,
-                                    'barcode' => $barcode,
-                                    'name' => $prodName,
-                                    'stock_egestor' => $newStock,
-                                    'stock_nuvemshop' => $newStock,
-                                    'status' => 'synced',
-                                    'last_sync_direction' => 'nuvem_to_egestor'
-                                ]);
+                            // Atualiza mapeamento no banco local
+                            $this->saveMapping([
+                                'egestor_id' => $egestorId,
+                                'nuvemshop_product_id' => $nuvemProdId,
+                                'nuvemshop_variant_id' => $nuvemVarId,
+                                'sku' => $sku,
+                                'barcode' => $barcode,
+                                'name' => $prodName,
+                                'stock_egestor' => $newStock,
+                                'stock_nuvemshop' => $newStock,
+                                'status' => 'synced',
+                                'last_sync_direction' => 'nuvem_to_egestor'
+                            ]);
 
-                                $syncedItems++;
-                            } else {
-                                $errMsg = "Falha ao alterar estoque no eGestor: " . ($updateRes['error'] ?? 'Erro desconhecido');
-                                Logger::error($errMsg);
-                                Database::logSync('nuvemshop', 'stock_deduct_failed', (string)$orderId, $errMsg, 'error');
-                            }
-                        } else {
-                            // Regra Estrita: eGestor é somente leitura para a Nuvemshop (nunca modifica produtos/estoques no eGestor)
-                            $protectedMsg = "Venda Nuvemshop #{$orderId}: Item '{$prodName}' (SKU {$sku}) - Cadastro e estoque do eGestor mantidos 100% intactos (regra de proteção ativa).";
-                            Logger::info($protectedMsg);
-                            Database::logSync('nuvemshop', 'egestor_protected', (string)$orderId, $protectedMsg, 'info');
                             $syncedItems++;
+                        } else {
+                            $errMsg = "Falha ao alterar estoque no eGestor: " . ($updateRes['error'] ?? 'Erro desconhecido');
+                            Logger::error($errMsg);
+                            Database::logSync('nuvemshop', 'stock_deduct_failed', (string)$orderId, $errMsg, 'error');
                         }
                     }
                 } else {
