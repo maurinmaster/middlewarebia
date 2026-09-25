@@ -93,8 +93,33 @@ try {
                 echo json_encode(['success' => false, 'error' => 'Código do produto não informado']);
                 exit;
             }
+            $force = isset($_POST['force']) ? filter_var($_POST['force'], FILTER_VALIDATE_BOOLEAN) : (isset($_GET['force']) ? filter_var($_GET['force'], FILTER_VALIDATE_BOOLEAN) : false);
 
-            $result = $syncService->syncProductFromEGestor($codigo);
+            $result = $syncService->syncProductFromEGestor($codigo, 'manual_send', $force);
+            echo json_encode($result);
+            break;
+
+        case 'delete_nuvem_product':
+            $productId = trim($_POST['id'] ?? $_GET['id'] ?? '');
+            if ($productId === '') {
+                echo json_encode(['success' => false, 'error' => 'ID do produto na Nuvemshop não informado']);
+                exit;
+            }
+            $result = $syncService->removeProductFromNuvemshop($productId);
+            echo json_encode($result);
+            break;
+
+        case 'egestor_vs_nuvem':
+            $page = max(1, (int)($_GET['page'] ?? $_POST['page'] ?? 1));
+            $filter = trim($_GET['filter'] ?? $_POST['filter'] ?? '');
+            $onlyMissing = false;
+            if (isset($_GET['only_missing'])) {
+                $onlyMissing = filter_var($_GET['only_missing'], FILTER_VALIDATE_BOOLEAN);
+            } elseif (isset($_POST['only_missing'])) {
+                $onlyMissing = filter_var($_POST['only_missing'], FILTER_VALIDATE_BOOLEAN);
+            }
+
+            $result = $syncService->getEGestorVsNuvemProducts($page, $filter, $onlyMissing);
             echo json_encode($result);
             break;
 

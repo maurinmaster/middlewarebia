@@ -35,6 +35,9 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
       </div>
     </div>
     <div class="header-actions">
+      <button class="btn btn-primary" onclick="openManualSendModal()" style="background: linear-gradient(135deg, #3b82f6, #1d4ed8); box-shadow: 0 4px 14px rgba(59, 130, 246, 0.3);">
+        📤 Enviar Produto Manual
+      </button>
       <button class="btn btn-secondary" onclick="openTestWebhookModal()">
         🧪 Testar Webhook
       </button>
@@ -103,16 +106,17 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
 
   <!-- Tabs Navigation -->
   <div class="tabs">
-    <button class="tab-btn active" data-tab="tab-products">📦 Estoque de Produtos</button>
+    <button class="tab-btn active" data-tab="tab-products">📦 Produtos na Nuvemshop</button>
+    <button class="tab-btn" data-tab="tab-visor" onclick="loadVisorProducts(1)">🔍 Vizor: eGestor vs Nuvemshop</button>
     <button class="tab-btn" data-tab="tab-logs">📜 Logs em Tempo Real</button>
     <button class="tab-btn" data-tab="tab-guide">📖 Como Configurar no eGestor</button>
   </div>
 
-  <!-- Tab 1: Produtos -->
+  <!-- Tab 1: Produtos na Nuvemshop -->
   <div id="tab-products" class="tab-content active">
     <div class="table-container">
       <div class="table-header">
-        <div style="font-weight: 600; font-size: 15px;">Produtos Integrados</div>
+        <div style="font-weight: 600; font-size: 15px;">Produtos Ativos na Nuvemshop</div>
         <div style="display: flex; gap: 10px; align-items: center;">
           <input type="text" id="search-products" class="search-input" placeholder="🔍 Buscar por SKU, Nome ou Código de Barras...">
           <button class="btn btn-secondary btn-sm" onclick="loadProducts()">Atualizar Lista</button>
@@ -124,7 +128,7 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
             <th>SKU / Código</th>
             <th>Código de Barras</th>
             <th>Descrição do Produto</th>
-            <th>Estoque Sincronizado</th>
+            <th>Estoque Nuvemshop</th>
             <th>Preço</th>
             <th>Status</th>
             <th style="text-align: right;">Ações</th>
@@ -134,6 +138,60 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
           <!-- Inserido dinamicamente via app.js -->
         </tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- Tab: Vizor eGestor vs Nuvemshop -->
+  <div id="tab-visor" class="tab-content">
+    <div class="table-container">
+      <div class="table-header" style="flex-wrap: wrap; gap: 12px;">
+        <div>
+          <div style="font-weight: 600; font-size: 15px;">🔍 Vizor Comparativo: Catálogo eGestor ➔ Nuvemshop</div>
+          <div style="font-size: 12px; color: var(--text-dim); margin-top: 3px;">
+            Veja quais produtos do eGestor ainda não estão na Nuvemshop. Envie qualquer produto manualmente ou retire produtos da loja online com 1 clique (o eGestor nunca é alterado).
+          </div>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+          <input type="text" id="search-visor" class="search-input" placeholder="🔍 Filtrar por Nome, SKU ou Código..." style="width: 260px;" onkeydown="if(event.key==='Enter') loadVisorProducts(1)">
+          
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #fff; cursor: pointer; background: rgba(255,255,255,0.05); padding: 7px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+            <input type="checkbox" id="check-visor-only-missing" checked onchange="loadVisorProducts(1)">
+            <span>Apenas NÃO enviados para a Nuvemshop</span>
+          </label>
+
+          <button class="btn btn-primary btn-sm" onclick="loadVisorProducts(1)">Buscar</button>
+        </div>
+      </div>
+
+      <!-- Resumo do Vizor -->
+      <div style="padding: 10px 16px; background: rgba(0,0,0,0.25); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+        <span id="visor-summary-text" style="color: var(--text-muted);">Carregando produtos do eGestor...</span>
+        <div id="visor-pagination-top" style="display: flex; gap: 6px; align-items: center;"></div>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Cód. eGestor</th>
+            <th>SKU</th>
+            <th>Código de Barras</th>
+            <th>Descrição do Produto</th>
+            <th>Estoque eGestor</th>
+            <th>Preço (R$)</th>
+            <th>Status na Nuvem</th>
+            <th style="text-align: right;">Ações Manuais</th>
+          </tr>
+        </thead>
+        <tbody id="visor-table-body">
+          <!-- Inserido dinamicamente via app.js -->
+        </tbody>
+      </table>
+
+      <!-- Paginação inferior -->
+      <div style="padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); background: rgba(0,0,0,0.15);">
+        <span id="visor-pagination-info" style="font-size: 13px; color: var(--text-dim);">Página 1</span>
+        <div id="visor-pagination-bottom" style="display: flex; gap: 8px;"></div>
+      </div>
     </div>
   </div>
 
@@ -249,6 +307,43 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
       <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
         <button type="button" class="btn btn-secondary" onclick="closeCreateProductModal()">Cancelar</button>
         <button type="submit" class="btn btn-primary">Cadastrar Produto</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Modal Envio Manual de Produto -->
+<div id="manual-send-modal" class="modal-overlay">
+  <div class="modal" style="max-width: 520px;">
+    <div class="modal-header">
+      <h3>📤 Envio Manual de Produto para a Nuvemshop</h3>
+      <button class="modal-close" onclick="closeManualSendModal()">&times;</button>
+    </div>
+    <form onsubmit="submitManualSend(event)">
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+        Informe o <strong>Código (ID)</strong> do produto no eGestor para importá-lo ou sincronizá-lo diretamente com a Nuvemshop.
+      </p>
+      <div class="form-group">
+        <label>Código do Produto no eGestor (ID) *:</label>
+        <input type="text" id="manual-send-codigo" class="form-control" required placeholder="Ex: 2180">
+      </div>
+      <div class="form-group" style="padding: 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: var(--radius-sm);">
+        <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; font-size: 13px; color: #fff; margin-bottom: 0;">
+          <input type="checkbox" id="manual-send-force" checked style="margin-top: 3px;">
+          <div>
+            <strong>Forçar envio mesmo se o produto estiver com estoque zerado</strong>
+            <p style="font-size: 12px; color: var(--text-dim); margin-top: 2px;">
+              Se marcado, enviará o produto para a Nuvemshop mesmo se a regra padrão de "apenas com estoque" estiver ativa.
+            </p>
+          </div>
+        </label>
+      </div>
+      <p style="font-size: 12px; color: #93c5fd; margin-top: 10px;">
+        🛡️ <strong>Garantia:</strong> O seu eGestor permanece 100% inalterado (apenas leitura). O item é enviado exclusivamente para a Nuvemshop.
+      </p>
+      <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
+        <button type="button" class="btn btn-secondary" onclick="closeManualSendModal()">Cancelar</button>
+        <button type="submit" class="btn btn-success" id="btn-manual-send-submit">📤 Enviar Agora</button>
       </div>
     </form>
   </div>

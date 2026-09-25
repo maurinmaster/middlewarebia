@@ -161,9 +161,12 @@ async function loadProducts(query = '') {
                         <td><span class="stock-tag ${stockClass}">${stock} un</span></td>
                         <td>${p.price ? 'R$ ' + parseFloat(p.price).toFixed(2) : '-'}</td>
                         <td>${statusBadge}</td>
-                        <td style="text-align: right;">
+                        <td style="text-align: right; white-space: nowrap;">
                             <button class="btn btn-secondary btn-sm" onclick="syncSingleProduct('${p.egestor_id || p.sku}')" title="Sincronizar estoque agora">
                                 🔄 Sincronizar
+                            </button>
+                            <button class="btn btn-danger btn-sm" style="margin-left: 6px;" onclick="removeProductFromNuvem('${p.nuvemshop_product_id}', '${escapeHtml(p.name)}')" title="Retirar produto da Nuvemshop (o eGestor não é alterado)">
+                                🗑️ Retirar
                             </button>
                         </td>
                     </tr>
@@ -374,11 +377,238 @@ async function syncSingleProduct(codigo) {
             showToast(data.message || 'Produto sincronizado com sucesso!', 'success');
             loadProducts();
             loadStatus(true);
+            const visorTab = document.getElementById('tab-visor');
+            if (visorTab && visorTab.classList.contains('active')) {
+                loadVisorProducts(window.currentVisorPage || 1);
+            }
         } else {
             showToast('Falha: ' + (data.error || 'Erro desconhecido'), 'error');
         }
     } catch (err) {
         showToast('Erro na requisição de sincronização', 'error');
+    }
+}
+
+// Remove produto da Nuvemshop (o eGestor nunca é alterado)
+async function removeProductFromNuvem(productId, productName) {
+    if (!productId) {
+        showToast('ID da Nuvemshop inválido para remoção', 'error');
+        return;
+    }
+
+    const conf = confirm(`⚠️ Confirmação de Retirada:\n\nDeseja realmente excluir o produto "${productName}" (ID #${productId}) da Nuvemshop?\n\n🛡️ Segurança: O produto continuará 100% INTACTO no seu eGestor.`);
+    if (!conf) return;
+
+    showToast(`Removendo produto #${productId} da Nuvemshop...`, 'info');
+
+    try {
+        const formData = new FormData();
+        formData.append('id', productId);
+
+        const res = await fetch('api.php?action=delete_nuvem_product', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            showToast(data.message || 'Produto retirado da Nuvemshop com sucesso!', 'success');
+            loadProducts();
+            loadStatus(true);
+            const visorTab = document.getElementById('tab-visor');
+            if (visorTab && visorTab.classList.contains('active')) {
+                loadVisorProducts(window.currentVisorPage || 1);
+            }
+        } else {
+            showToast('Erro ao remover: ' + (data.error || 'Falha'), 'error');
+        }
+    } catch (err) {
+        showToast('Erro de comunicação ao excluir produto da Nuvemshop', 'error');
+    }
+}
+
+// Modal Envio Manual
+function openManualSendModal(codigo = '') {
+    const input = document.getElementById('manual-send-codigo');
+    if (input && codigo) input.value = codigo;
+    document.getElementById('manual-send-modal').classList.add('active');
+}
+
+function closeManualSendModal() {
+    document.getElementById('manual-send-modal').classList.remove('active');
+}
+
+async function submitManualSend(e) {
+    e.preventDefault();
+    const codigo = document.getElementById('manual-send-codigo').value.trim();
+    const force = document.getElementById('manual-send-force').checked;
+
+    if (!codigo) {
+        showToast('Informe o código do produto no eGestor', 'error');
+        return;
+    }
+
+    const submitBtn = document.getElementById('btn-manual-send-submit');
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Enviando...';
+    }
+
+    await sendProductToNuvem(codigo, force);
+
+    if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = '📤 Enviar Agora';
+    }
+    closeManualSendModal();
+}
+
+// Envia produto individual do eGestor para a Nuvemshop
+async function sendProductToNuvem(codigo, force = true) {
+    if (!codigo) {
+        showToast('Código inválido', 'error');
+        return;
+    }
+
+    showToast(`Buscando e enviando produto ${codigo} para a Nuvemshop...`, 'info');
+
+    try {
+        const formData = new FormData();
+        formData.append('codigo', codigo);
+        formData.append('force', force ? '1' : '0');
+
+        const res = await fetch('api.php?action=sync_product', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            showToast(data.message || 'Produto enviado para a Nuvemshop com sucesso!', 'success');
+            loadProducts();
+            loadStatus(true);
+            const visorTab = document.getElementById('tab-visor');
+            if (visorTab && visorTab.classList.contains('active')) {
+                loadVisorProducts(window.currentVisorPage || 1);
+            }
+        } else {
+            showToast('Falha no envio: ' + (data.error || 'Erro desconhecido'), 'error');
+        }
+    } catch (err) {
+        showToast('Erro de comunicação ao enviar produto', 'error');
+    }
+}
+
+// Vizor: Carrega lista comparativa eGestor vs Nuvemshop
+window.currentVisorPage = 1;
+async function loadVisorProducts(page = 1) {
+    window.currentVisorPage = page;
+    const tableBody = document.getElementById('visor-table-body');
+    const summaryText = document.getElementById('visor-summary-text');
+    const pagInfo = document.getElementById('visor-pagination-info');
+    const pagTop = document.getElementById('visor-pagination-top');
+    const pagBottom = document.getElementById('visor-pagination-bottom');
+
+    if (!tableBody) return;
+
+    tableBody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 25px;">Carregando produtos do eGestor...</td></tr>';
+    if (summaryText) summaryText.textContent = 'Consultando API do eGestor...';
+
+    const filterInput = document.getElementById('search-visor');
+    const filter = filterInput ? filterInput.value.trim() : '';
+    const onlyMissingCheck = document.getElementById('check-visor-only-missing');
+    const onlyMissing = onlyMissingCheck ? onlyMissingCheck.checked : false;
+
+    try {
+        const url = `api.php?action=egestor_vs_nuvem&page=${page}&filter=${encodeURIComponent(filter)}&only_missing=${onlyMissing ? 1 : 0}`;
+        const res = await fetch(url);
+        const data = await res.json();
+
+        if (!data.success) {
+            tableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--danger); padding: 25px;">Erro ao consultar eGestor: ${escapeHtml(data.error || 'Falha')}</td></tr>`;
+            if (summaryText) summaryText.textContent = 'Erro ao carregar catálogo';
+            return;
+        }
+
+        const items = data.items || [];
+        const totalEGestor = data.total_egestor || 0;
+        const lastPage = data.last_page || 1;
+
+        if (summaryText) {
+            summaryText.innerHTML = `Total de produtos no eGestor: <strong>${totalEGestor.toLocaleString()}</strong> | Exibindo página <strong>${page}</strong> de <strong>${lastPage}</strong>${onlyMissing ? ' &bull; <span style="color:#fde047;">(Filtrando: apenas os que NÃO estão na Nuvemshop)</span>' : ''}`;
+        }
+
+        if (pagInfo) {
+            pagInfo.textContent = `Página ${page} de ${lastPage} (${totalEGestor.toLocaleString()} itens no eGestor)`;
+        }
+
+        const renderPaginationBtns = () => {
+            let btns = '';
+            if (page > 1) {
+                btns += `<button class="btn btn-secondary btn-sm" onclick="loadVisorProducts(${page - 1})">&laquo; Anterior</button>`;
+            }
+            if (page < lastPage) {
+                btns += `<button class="btn btn-secondary btn-sm" onclick="loadVisorProducts(${page + 1})">Próxima &raquo;</button>`;
+            }
+            return btns;
+        };
+
+        if (pagTop) pagTop.innerHTML = renderPaginationBtns();
+        if (pagBottom) pagBottom.innerHTML = renderPaginationBtns();
+
+        if (items.length === 0) {
+            tableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 30px;">Nenhum produto encontrado nesta página ${onlyMissing ? 'com o filtro de ausentes.' : '.'}</td></tr>`;
+            return;
+        }
+
+        tableBody.innerHTML = items.map(p => {
+            const stock = parseFloat(p.estoque || 0);
+            let stockBadge = '<span class="stock-tag in-stock">' + stock + ' un</span>';
+            if (stock <= 0) stockBadge = '<span class="stock-tag out-of-stock">0 un</span>';
+            else if (stock <= 3) stockBadge = '<span class="stock-tag low-stock">' + stock + ' un</span>';
+
+            let statusHtml = '';
+            let actionHtml = '';
+
+            if (p.in_nuvemshop) {
+                statusHtml = `<span class="status-badge online"><span class="status-dot"></span> Na Nuvemshop (#${p.nuvemshop_product_id})</span>`;
+                actionHtml = `
+                    <div style="display: flex; gap: 6px; justify-content: flex-end;">
+                        <button class="btn btn-secondary btn-sm" onclick="syncSingleProduct('${p.codigo}')" title="Sincronizar estoque do eGestor para a Nuvemshop">
+                            🔄
+                        </button>
+                        <button class="btn btn-danger btn-sm" onclick="removeProductFromNuvem('${p.nuvemshop_product_id}', '${escapeHtml(p.nome)}')" title="Retirar da Nuvemshop (mantém 100% no eGestor)">
+                            🗑️ Retirar da Nuvem
+                        </button>
+                    </div>
+                `;
+            } else {
+                statusHtml = `<span class="status-badge warning" style="color: #fde047;"><span class="status-dot"></span> Não Enviado</span>`;
+                actionHtml = `
+                    <div style="display: flex; gap: 6px; justify-content: flex-end;">
+                        <button class="btn btn-success btn-sm" onclick="sendProductToNuvem('${p.codigo}', true)" title="Enviar este produto manualmente para a Nuvemshop">
+                            📤 Enviar para Nuvem
+                        </button>
+                    </div>
+                `;
+            }
+
+            return `
+                <tr>
+                    <td><strong>${p.codigo}</strong></td>
+                    <td>${p.sku || '-'}</td>
+                    <td>${p.barcode || '-'}</td>
+                    <td>${escapeHtml(p.nome)}</td>
+                    <td>${stockBadge}</td>
+                    <td>${p.preco ? 'R$ ' + parseFloat(p.preco).toFixed(2) : '-'}</td>
+                    <td>${statusHtml}</td>
+                    <td style="text-align: right;">${actionHtml}</td>
+                </tr>
+            `;
+        }).join('');
+
+    } catch (err) {
+        tableBody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--danger); padding: 25px;">Erro de conexão ao consultar produtos do eGestor.</td></tr>';
     }
 }
 

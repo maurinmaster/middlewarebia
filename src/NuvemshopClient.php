@@ -243,6 +243,14 @@ class NuvemshopClient {
     }
 
     /**
+     * Remove um produto da Nuvemshop
+     */
+    public function deleteProduct(int|string $productId): array {
+        Logger::info("Excluindo produto {$productId} da Nuvemshop...");
+        return $this->request('DELETE', "/products/{$productId}");
+    }
+
+    /**
      * Remove webhook na Nuvemshop
      */
     public function deleteWebhook(int|string $webhookId): array {
