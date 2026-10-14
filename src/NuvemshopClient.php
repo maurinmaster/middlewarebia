@@ -200,7 +200,7 @@ class NuvemshopClient {
     }
 
     /**
-     * Cria um novo produto na Nuvemshop
+     * Cria um novo produto na Nuvemshop (suporta produto simples ou com grade/atributos de variações)
      */
     public function createProduct(array $data): array {
         $payload = [
@@ -209,23 +209,73 @@ class NuvemshopClient {
             ],
             'description' => [
                 'pt' => $data['description'] ?? ''
-            ],
-            'variants' => [
-                [
-                    'price' => number_format((float)($data['price'] ?? 0), 2, '.', ''),
-                    'stock' => (int)($data['stock'] ?? 0),
-                    'stock_management' => true,
-                    'sku' => (string)($data['sku'] ?? ''),
-                    'barcode' => (string)($data['barcode'] ?? ''),
-                    'inventory_levels' => [
-                        [
-                            'location_id' => $this->locationId,
-                            'stock' => (int)($data['stock'] ?? 0)
-                        ]
-                    ]
-                ]
             ]
         ];
+
+        // Se houver atributos da grade (ex: Cor, Tamanho)
+        if (!empty($data['attributes']) && is_array($data['attributes'])) {
+            $payload['attributes'] = [];
+            foreach ($data['attributes'] as $attr) {
+                if (is_array($attr)) {
+                    $payload['attributes'][] = $attr;
+                } else {
+                    $payload['attributes'][] = ['pt' => trim((string)$attr)];
+                }
+            }
+        }
+
+        // Variantes múltiplas ou simples
+        if (!empty($data['variants']) && is_array($data['variants'])) {
+            $payload['variants'] = [];
+            foreach ($data['variants'] as $v) {
+                $stockVal = (int)($v['stock'] ?? 0);
+                $varItem = [
+                    'price' => number_format((float)($v['price'] ?? 0), 2, '.', ''),
+                    'stock' => $stockVal,
+                    'stock_management' => true,
+                    'sku' => (string)($v['sku'] ?? ''),
+                    'barcode' => (string)($v['barcode'] ?? '')
+                ];
+                if (!empty($this->locationId)) {
+                    $varItem['inventory_levels'] = [
+                        [
+                            'location_id' => $this->locationId,
+                            'stock' => $stockVal
+                        ]
+                    ];
+                }
+                if (!empty($v['values']) && is_array($v['values'])) {
+                    $varItem['values'] = [];
+                    foreach ($v['values'] as $val) {
+                        if (is_array($val)) {
+                            $varItem['values'][] = $val;
+                        } else {
+                            $varItem['values'][] = ['pt' => trim((string)$val)];
+                        }
+                    }
+                }
+                $payload['variants'][] = $varItem;
+            }
+        } else {
+            // Variante padrão única para produto simples
+            $stockVal = (int)($data['stock'] ?? 0);
+            $singleVariant = [
+                'price' => number_format((float)($data['price'] ?? 0), 2, '.', ''),
+                'stock' => $stockVal,
+                'stock_management' => true,
+                'sku' => (string)($data['sku'] ?? ''),
+                'barcode' => (string)($data['barcode'] ?? '')
+            ];
+            if (!empty($this->locationId)) {
+                $singleVariant['inventory_levels'] = [
+                    [
+                        'location_id' => $this->locationId,
+                        'stock' => $stockVal
+                    ]
+                ];
+            }
+            $payload['variants'] = [$singleVariant];
+        }
 
         if (!empty($data['images'])) {
             $payload['images'] = [];

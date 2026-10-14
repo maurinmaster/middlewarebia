@@ -283,6 +283,18 @@ try {
             }
             break;
 
+        case 'create_unified_product':
+            // Cria um produto com grade de variações unificando produtos avulsos do eGestor
+            $rawInput = file_get_contents('php://input');
+            $data = json_decode($rawInput, true);
+            if (empty($data)) {
+                $data = $_POST;
+            }
+
+            $res = $syncService->createUnifiedProduct($data);
+            echo json_encode($res);
+            break;
+
         default:
             echo json_encode(['success' => false, 'error' => 'Ação inválida']);
     }

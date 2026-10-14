@@ -268,10 +268,35 @@ class SyncService {
 
                 $egestorId = null;
 
-                // A) Busca primeiro na tabela local de mapeamentos (por variant_id, product_id, sku ou barcode)
-                $stmt = $db->prepare("SELECT * FROM product_mappings WHERE nuvemshop_variant_id = ? OR nuvemshop_product_id = ? OR (sku != '' AND sku = ?) OR (barcode != '' AND barcode = ?) LIMIT 1");
-                $stmt->execute([(string)$nuvemVarId, (string)$nuvemProdId, $sku, $barcode]);
-                $mapping = $stmt->fetch();
+                // A) Busca na tabela local de mapeamentos com prioridade estrita:
+                // 1º Por ID da Variante (garante que produtos com grade/variações unificadas encontrem o eGestor ID exato daquela cor/tamanho!)
+                $mapping = null;
+                if (!empty($nuvemVarId)) {
+                    $stmt = $db->prepare("SELECT * FROM product_mappings WHERE nuvemshop_variant_id = ? LIMIT 1");
+                    $stmt->execute([(string)$nuvemVarId]);
+                    $mapping = $stmt->fetch();
+                }
+
+                // 2º Por SKU
+                if (!$mapping && $sku !== '') {
+                    $stmt = $db->prepare("SELECT * FROM product_mappings WHERE sku != '' AND sku = ? LIMIT 1");
+                    $stmt->execute([$sku]);
+                    $mapping = $stmt->fetch();
+                }
+
+                // 3º Por Código de Barras
+                if (!$mapping && $barcode !== '') {
+                    $stmt = $db->prepare("SELECT * FROM product_mappings WHERE barcode != '' AND barcode = ? LIMIT 1");
+                    $stmt->execute([$barcode]);
+                    $mapping = $stmt->fetch();
+                }
+
+                // 4º Por ID do Produto Pai (apenas fallback para produtos de variante única)
+                if (!$mapping && !empty($nuvemProdId)) {
+                    $stmt = $db->prepare("SELECT * FROM product_mappings WHERE nuvemshop_product_id = ? LIMIT 1");
+                    $stmt->execute([(string)$nuvemProdId]);
+                    $mapping = $stmt->fetch();
+                }
 
                 if ($mapping && !empty($mapping['egestor_id'])) {
                     $egestorId = $mapping['egestor_id'];
@@ -912,5 +937,156 @@ class SyncService {
             Logger::error('Erro ao consultar produtos eGestor vs Nuvem: ' . $e->getMessage());
             return ['success' => false, 'error' => $e->getMessage()];
         }
+    }
+
+    /**
+     * Cria um produto unificado com grade (múltiplas variações) na Nuvemshop
+     * vinculando cada variação ao seu respectivo produto no eGestor.
+     */
+    public function createUnifiedProduct(array $data): array {
+        $parentName = trim($data['name'] ?? '');
+        if ($parentName === '') {
+            return ['success' => false, 'error' => 'O nome principal do produto na Nuvemshop é obrigatório.'];
+        }
+
+        $attributes = $data['attributes'] ?? [];
+        if (empty($attributes) || !is_array($attributes)) {
+            return ['success' => false, 'error' => 'Ao menos um atributo da grade (ex: Tamanho ou Cor) deve ser definido.'];
+        }
+
+        $variantsInput = $data['variants'] ?? [];
+        if (empty($variantsInput) || count($variantsInput) < 2) {
+            return ['success' => false, 'error' => 'A unificação requer pelo menos 2 produtos do eGestor selecionados.'];
+        }
+
+        $nuvemVariants = [];
+        $collectedImages = [];
+        $preparedVariants = [];
+
+        foreach ($variantsInput as $index => $v) {
+            $egestorId = trim((string)($v['egestor_id'] ?? ''));
+            if ($egestorId === '') {
+                return ['success' => false, 'error' => "ID do eGestor ausente na variante #" . ($index + 1)];
+            }
+
+            // Busca os dados do produto no eGestor para garantir integridade
+            $eProdRes = $this->egestor->getProduct($egestorId);
+            $eProd = $eProdRes['success'] ? ($eProdRes['data'] ?? []) : [];
+
+            $rawSku = trim((string)($v['sku'] ?? ($eProd['codigoProprio'] ?? '')));
+            $sku = $rawSku !== '' ? $rawSku : $egestorId;
+
+            $rawBarcode = trim((string)($v['barcode'] ?? ($eProd['refEanGtin'] ?? '')));
+            $upperBarcode = strtoupper($rawBarcode);
+            $barcode = ($rawBarcode === '' || $upperBarcode === 'SEM GTIN' || $upperBarcode === 'SEM_GTIN' || $rawBarcode === '0') ? '' : $rawBarcode;
+
+            $stock = isset($v['stock']) ? max(0, (float)$v['stock']) : max(0, (float)($eProd['estoque'] ?? 0));
+            $price = isset($v['price']) ? (float)$v['price'] : (float)($eProd['precoVenda'] ?? 0);
+
+            // Valores dos atributos (ex: ['Verde', 'M'])
+            $rawValues = (array)($v['values'] ?? []);
+            $values = [];
+            foreach ($rawValues as $val) {
+                $values[] = ['pt' => trim((string)$val)];
+            }
+
+            if (count($values) !== count($attributes)) {
+                return ['success' => false, 'error' => "A variante com código eGestor {$egestorId} deve ter exatamente " . count($attributes) . " valores de atributos preenchidos."];
+            }
+
+            // Coleta fotos do eGestor se houver
+            if (!empty($eProd['listaImagens']) && is_array($eProd['listaImagens'])) {
+                foreach ($eProd['listaImagens'] as $imgItem) {
+                    $link = $imgItem['foto']['link'] ?? $imgItem['thumb']['link'] ?? null;
+                    if ($link && !in_array($link, $collectedImages)) {
+                        $collectedImages[] = $link;
+                    }
+                }
+            }
+
+            $nuvemVariants[] = [
+                'price' => $price,
+                'stock' => (int)$stock,
+                'sku' => $sku,
+                'barcode' => $barcode,
+                'values' => $values
+            ];
+
+            $preparedVariants[] = [
+                'egestor_id' => $egestorId,
+                'sku' => $sku,
+                'barcode' => $barcode,
+                'stock' => $stock,
+                'price' => $price,
+                'values_text' => implode(' / ', array_map(fn($val) => is_array($val) ? ($val['pt'] ?? '') : (string)$val, $rawValues))
+            ];
+        }
+
+        // Monta payload e cria o produto na Nuvemshop
+        $payload = [
+            'name' => $parentName,
+            'description' => trim($data['description'] ?? "Produto com grade unificada a partir do eGestor PDV."),
+            'attributes' => array_map(fn($a) => is_array($a) ? $a : ['pt' => trim((string)$a)], $attributes),
+            'variants' => $nuvemVariants,
+            'images' => $collectedImages
+        ];
+
+        Logger::info("Criando produto com grade unificada na Nuvemshop: '{$parentName}' com " . count($nuvemVariants) . " variações...");
+        $createRes = $this->nuvemshop->createProduct($payload);
+
+        if (!$createRes['success'] || empty($createRes['data']['id'])) {
+            $err = $createRes['error'] ?? 'Falha ao criar produto unificado na Nuvemshop';
+            Logger::error("Erro na criação de produto unificado: {$err}", ['body' => $createRes['data'] ?? []]);
+            return ['success' => false, 'error' => $err];
+        }
+
+        $createdProduct = $createRes['data'];
+        $createdProductId = (string)$createdProduct['id'];
+        $returnedVariants = $createdProduct['variants'] ?? [];
+
+        // Mapeia cada variação criada na Nuvemshop ao respectivo produto do eGestor
+        $mappedCount = 0;
+        foreach ($preparedVariants as $i => $pv) {
+            $createdVariant = $returnedVariants[$i] ?? null;
+            // Se por algum motivo o índice não bater, busca pelo SKU
+            if (!$createdVariant || (string)($createdVariant['sku'] ?? '') !== $pv['sku']) {
+                foreach ($returnedVariants as $rv) {
+                    if ((string)($rv['sku'] ?? '') === $pv['sku']) {
+                        $createdVariant = $rv;
+                        break;
+                    }
+                }
+            }
+
+            $createdVarId = $createdVariant['id'] ?? null;
+            $varName = $parentName . ($pv['values_text'] !== '' ? " - {$pv['values_text']}" : '');
+
+            $this->saveMapping([
+                'egestor_id' => $pv['egestor_id'],
+                'nuvemshop_product_id' => $createdProductId,
+                'nuvemshop_variant_id' => $createdVarId,
+                'sku' => $pv['sku'],
+                'barcode' => $pv['barcode'],
+                'name' => $varName,
+                'stock_egestor' => $pv['stock'],
+                'stock_nuvemshop' => $pv['stock'],
+                'price' => $pv['price'],
+                'status' => 'synced',
+                'last_sync_direction' => 'egestor_unified_create'
+            ]);
+
+            $mappedCount++;
+        }
+
+        $successMsg = "Produto '{$parentName}' criado na Nuvemshop com sucesso (ID #{$createdProductId}) contendo {$mappedCount} variações unificadas vinculadas ao eGestor!";
+        Logger::info($successMsg);
+        Database::logSync('egestor', 'unified_product_created', $createdProductId, $successMsg, 'success');
+
+        return [
+            'success' => true,
+            'message' => $successMsg,
+            'nuvemshop_product_id' => $createdProductId,
+            'variants_count' => $mappedCount
+        ];
     }
 }
