@@ -43,6 +43,9 @@ function initTabs() {
             if (targetId === 'tab-logs') {
                 loadLogs();
             }
+            if (targetId === 'tab-novo-produto') {
+                generateVariantsTable();
+            }
         });
     });
 }
@@ -789,8 +792,8 @@ async function submitTestWebhook(e) {
 }
 
 function escapeHtml(text) {
-    if (!text) return '';
-    return text
+    if (text === null || text === undefined) return '';
+    return String(text)
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
@@ -805,6 +808,7 @@ function escapeHtml(text) {
 function switchToNewProductTab() {
     const tabBtn = document.querySelector('.tab-btn[data-tab="tab-novo-produto"]');
     if (tabBtn) tabBtn.click();
+    generateVariantsTable();
     setTimeout(() => {
         const nameInput = document.getElementById('prod-name');
         if (nameInput) nameInput.focus();
@@ -812,7 +816,20 @@ function switchToNewProductTab() {
 }
 
 function initNewProductForm() {
+    const chk = document.getElementById('chk-has-variants');
+    if (chk) toggleHasVariants(chk.checked);
+    const chk2 = document.getElementById('chk-enable-prop-2');
+    if (chk2) toggleProp2(chk2.checked);
     generateVariantsTable();
+
+    // Registra listeners diretos nos inputs da grade
+    ['prop-1-values', 'prop-2-values', 'prop-1-name', 'prop-2-name', 'prod-price'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('input', generateVariantsTable);
+            el.addEventListener('change', generateVariantsTable);
+        }
+    });
 }
 
 function toggleHasVariants(hasVariants) {
@@ -866,12 +883,12 @@ function generateVariantsTable() {
 
     const prop1Name = (document.getElementById('prop-1-name')?.value || 'Cor').trim();
     const prop1Raw = document.getElementById('prop-1-values')?.value || '';
-    const prop1Values = prop1Raw.split(',').map(s => s.trim()).filter(s => s !== '');
+    const prop1Values = prop1Raw.split(/[,;\n]+/).map(s => s.trim()).filter(s => s !== '');
 
     const prop2Enabled = document.getElementById('chk-enable-prop-2')?.checked ?? true;
     const prop2Name = (document.getElementById('prop-2-name')?.value || 'Tamanho').trim();
     const prop2Raw = document.getElementById('prop-2-values')?.value || '';
-    const prop2Values = prop2Enabled ? prop2Raw.split(',').map(s => s.trim()).filter(s => s !== '') : [];
+    const prop2Values = prop2Enabled ? prop2Raw.split(/[,;\n]+/).map(s => s.trim()).filter(s => s !== '') : [];
 
     const basePrice = parseFloat(document.getElementById('prod-price')?.value || 0).toFixed(2);
 
