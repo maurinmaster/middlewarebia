@@ -869,7 +869,7 @@ function generateVariantsTable() {
     const prop1Values = prop1Raw.split(',').map(s => s.trim()).filter(s => s !== '');
 
     const prop2Enabled = document.getElementById('chk-enable-prop-2')?.checked ?? true;
-    const prop2Name = (document.getElementById('prop-2-name')?.value || 'Modelo').trim();
+    const prop2Name = (document.getElementById('prop-2-name')?.value || 'Tamanho').trim();
     const prop2Raw = document.getElementById('prop-2-values')?.value || '';
     const prop2Values = prop2Enabled ? prop2Raw.split(',').map(s => s.trim()).filter(s => s !== '') : [];
 
@@ -981,7 +981,7 @@ async function submitFullProduct(e) {
     if (hasVariants) {
         const prop1Name = (document.getElementById('prop-1-name')?.value || 'Cor').trim();
         const prop2Enabled = document.getElementById('chk-enable-prop-2')?.checked ?? true;
-        const prop2Name = (document.getElementById('prop-2-name')?.value || 'Modelo').trim();
+        const prop2Name = (document.getElementById('prop-2-name')?.value || 'Tamanho').trim();
 
         const attributes = [];
         if (prop1Name) attributes.push(prop1Name);

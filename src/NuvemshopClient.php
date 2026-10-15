@@ -196,6 +196,14 @@ class NuvemshopClient {
      * Atualiza dados de uma variante na Nuvemshop (ex: sku, barcode, price, etc.)
      */
     public function updateVariant(int|string $productId, int|string $variantId, array $data): array {
+        if (isset($data['stock']) && !isset($data['inventory_levels']) && !empty($this->locationId)) {
+            $data['inventory_levels'] = [
+                [
+                    'location_id' => $this->locationId,
+                    'stock' => (int)$data['stock']
+                ]
+            ];
+        }
         return $this->request('PUT', "/products/{$productId}/variants/{$variantId}", $data);
     }
 

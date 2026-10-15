@@ -248,12 +248,12 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
                 </div>
               </div>
 
-              <!-- Propriedade 2: Modelo ou Tamanho -->
+              <!-- Propriedade 2: Tamanho ou Modelo -->
               <div class="variant-prop-box" id="prop-2-box">
                 <div class="form-grid-2">
                   <div class="form-group" style="margin-bottom: 0;">
                     <label>Nome da Propriedade 2:</label>
-                    <input type="text" id="prop-2-name" class="form-control" value="Modelo" placeholder="Ex: Modelo ou Tamanho" oninput="generateVariantsTable()">
+                    <input type="text" id="prop-2-name" class="form-control" value="Tamanho" placeholder="Ex: Tamanho ou Modelo" oninput="generateVariantsTable()">
                   </div>
                   <div class="form-group" style="margin-bottom: 0;">
                     <label>Valores (separados por vírgula):</label>
@@ -266,7 +266,7 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
               <div style="display: flex; justify-content: space-between; align-items: center; margin: 10px 0 14px 0;">
                 <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); cursor: pointer;">
                   <input type="checkbox" id="chk-enable-prop-2" checked onchange="toggleProp2(this.checked)">
-                  <span>Incluir 2ª Propriedade (Modelo/Tamanho)</span>
+                  <span>Incluir 2ª Propriedade (Tamanho/Modelo)</span>
                 </label>
                 <button type="button" class="btn btn-secondary btn-sm" onclick="generateVariantsTable()">🔄 Recalcular Combinações</button>
               </div>
