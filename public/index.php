@@ -7,7 +7,6 @@ require_once dirname(__DIR__) . '/src/Database.php';
 $config = require dirname(__DIR__) . '/config/config.php';
 
 $currentBaseUrl = $config['app_url'];
-
 $egestorWebhookUrl = $currentBaseUrl . '/webhook-egestor.php';
 $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
 ?>
@@ -16,7 +15,7 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Middleware Bia | Integração PDV eGestor ⇄ Nuvemshop</title>
+  <title>Middleware Bia | Lista de Produtos e Gestão PDV ⇄ Nuvemshop</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
@@ -24,637 +23,533 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
 </head>
 <body>
 
-<div class="container">
-  <!-- Header -->
-  <header>
-    <div class="brand">
-      <div class="logo-badge">⚡</div>
-      <div class="brand-text">
-        <h1>Middleware Bia &bull; PDV ⇄ Nuvemshop</h1>
-        <p>Sincronização bidirecional de catálogo e controle unificado de estoques em tempo real</p>
-      </div>
-    </div>
-    <div class="header-actions">
-      <button class="btn btn-primary" onclick="openSyncModal()" style="background: linear-gradient(135deg, #10b981, #059669); box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3); font-weight: 600; padding: 10px 22px;">
-        🔄 Sincronizar
-      </button>
-      <button class="btn btn-secondary" onclick="openSettingsModal()" title="Configurações">
-        ⚙️
-      </button>
-    </div>
-  </header>
+<div class="app-container">
 
-  <!-- Status Cards -->
-  <div class="grid-cards">
-    <!-- Nuvemshop -->
-    <div class="card">
-      <div class="card-title">
-        <span>Nuvemshop (Loja Virtual)</span>
-        <span id="nuvem-status-badge" class="status-badge warning">
-          <span class="status-dot"></span> Verificando...
-        </span>
+  <!-- ========================================================
+       SIDEBAR LATERAL COM BOTÕES E CADASTRO EM EVIDÊNCIA
+       ======================================================== -->
+  <aside class="app-sidebar">
+    <!-- Brand -->
+    <div class="sidebar-brand">
+      <div class="brand-icon">⚡</div>
+      <div>
+        <div class="brand-title">Bia Middleware</div>
+        <div class="brand-subtitle">PDV eGestor ⇄ Nuvemshop</div>
       </div>
-      <div class="card-stat" id="nuvem-store-name">Carregando...</div>
-      <div class="card-desc">Loja ID: <strong><?= htmlspecialchars($config['nuvemshop']['store_id']) ?></strong></div>
-      <div class="endpoint-box">
-        <span class="endpoint-url" id="nuvem-url-text"><?= htmlspecialchars($nuvemshopWebhookUrl) ?></span>
-        <button class="btn btn-secondary btn-sm" onclick="copyToClipboard('<?= htmlspecialchars($nuvemshopWebhookUrl) ?>', 'URL do webhook Nuvemshop copiada!')">Copiar</button>
-      </div>
-      <button class="btn btn-secondary btn-sm" style="margin-top: 10px; width: 100%; justify-content: center;" onclick="registerNuvemshopWebhooks()">
-        ⚡ Ativar Webhooks na Nuvemshop
+    </div>
+
+    <!-- Botão de Cadastrar Produto em Alta Evidência (CTA Principal) -->
+    <div class="sidebar-cta-wrap">
+      <button class="btn-sidebar-cta" onclick="switchToNewProductTab()" id="btn-sidebar-new-prod">
+        <span style="font-size: 17px;">➕</span>
+        <span>Cadastrar Produto</span>
       </button>
     </div>
 
-    <!-- eGestor -->
-    <div class="card">
-      <div class="card-title">
-        <span>eGestor (PDV / Caixa)</span>
-        <span id="egestor-status-badge" class="status-badge warning">
-          <span class="status-dot"></span> Verificando...
-        </span>
-      </div>
-      <div class="card-stat" id="egestor-company-name">Conectando...</div>
-      <div class="card-desc">Token: <strong><?= htmlspecialchars(substr($config['egestor']['security_token'], 0, 10)) ?>...</strong></div>
-      <div class="endpoint-box">
-        <span class="endpoint-url" id="egestor-url-text"><?= htmlspecialchars($egestorWebhookUrl) ?></span>
-        <button class="btn btn-secondary btn-sm" onclick="copyToClipboard('<?= htmlspecialchars($egestorWebhookUrl) ?>', 'URL do webhook eGestor copiada!')">Copiar</button>
-      </div>
-    </div>
+    <!-- Menu de Navegação -->
+    <div class="sidebar-nav-title">Menu Principal</div>
+    <nav class="sidebar-nav">
+      <button class="nav-link-btn active" data-tab="tab-lista-produtos">
+        <span class="nav-icon">📦</span>
+        <span>Lista de Produtos</span>
+      </button>
+      <button class="nav-link-btn" data-tab="tab-novo-produto">
+        <span class="nav-icon">➕</span>
+        <span>Novo Produto</span>
+      </button>
+      <button class="nav-link-btn" data-tab="tab-logs">
+        <span class="nav-icon">📜</span>
+        <span>Logs do Sistema</span>
+      </button>
+      <button class="nav-link-btn" data-tab="tab-config">
+        <span class="nav-icon">⚙️</span>
+        <span>Configurações &amp; Webhooks</span>
+      </button>
+      <button class="nav-link-btn" data-tab="tab-guide">
+        <span class="nav-icon">📖</span>
+        <span>Guia do eGestor</span>
+      </button>
+    </nav>
 
-    <!-- Estoque & Mapeamentos -->
-    <div class="card">
-      <div class="card-title">
-        <span>Catálogo Mapeado</span>
-        <span class="status-badge online"><span class="status-dot"></span> Ativo</span>
-      </div>
-      <div class="card-stat" id="stat-total-products">0</div>
-      <div class="card-desc">Última sincronização: <strong id="stat-last-sync">Nenhuma</strong></div>
-      <div style="margin-top: 12px; font-size: 13px; color: var(--text-dim);">
-        Erros nas últimas 24h: <strong id="stat-errors" style="color: var(--danger);">0</strong>
-      </div>
-    </div>
-  </div>
-
-  <!-- Tabs Navigation -->
-  <div class="tabs">
-    <button class="tab-btn active" data-tab="tab-products">📦 Produtos na Nuvemshop</button>
-    <button class="tab-btn" data-tab="tab-novo-produto" style="font-weight: 600; color: #60a5fa;">➕ Cadastrar Produto</button>
-    <button class="tab-btn" data-tab="tab-visor" onclick="loadVisorProducts(1)">🔍 Vizor: eGestor vs Nuvemshop</button>
-    <button class="tab-btn" data-tab="tab-logs">📜 Logs em Tempo Real</button>
-    <button class="tab-btn" data-tab="tab-guide">📖 Como Configurar no eGestor</button>
-  </div>
-
-  <!-- Tab 1: Produtos na Nuvemshop -->
-  <div id="tab-products" class="tab-content active">
-    <div class="table-container">
-      <div class="table-header" style="flex-wrap: wrap; gap: 12px;">
-        <div style="font-weight: 600; font-size: 15px;">Produtos Ativos na Nuvemshop</div>
-        <div class="filter-bar">
-          <input type="text" id="search-products" class="search-input" placeholder="🔍 Buscar SKU, Nome ou Barras..." style="min-width: 220px;" oninput="debounceLoadProducts()">
-          
-          <select id="filter-products-stock" class="search-input" style="min-width: 160px;" onchange="loadProducts()">
-            <option value="all">📦 Todo Estoque</option>
-            <option value="has_stock">✅ Com Estoque (&gt; 0)</option>
-            <option value="zero_stock">🛑 Sem Estoque (= 0)</option>
-            <option value="low_stock">⚠️ Estoque Baixo (1 a 3)</option>
-          </select>
-
-          <select id="filter-products-status" class="search-input" style="min-width: 150px;" onchange="loadProducts()">
-            <option value="all">⚡ Todos os Status</option>
-            <option value="synced">🟢 Sincronizado</option>
-            <option value="pending">🟡 Pendente</option>
-            <option value="error">🔴 Com Erro</option>
-          </select>
-
-          <button class="btn btn-secondary btn-sm" onclick="resetProductsFilters()">Limpar</button>
-          <button class="btn btn-primary btn-sm" onclick="loadProducts()">Atualizar</button>
-          <button class="btn btn-primary btn-sm" onclick="switchToNewProductTab()" style="font-weight: 600; background: #2563eb;">➕ Cadastrar Novo</button>
+    <!-- Rodapé: Status de Conexão das APIs -->
+    <div class="sidebar-footer">
+      <div class="conn-pill">
+        <div class="conn-pill-header">
+          <span class="conn-pill-name">Nuvemshop</span>
+          <span id="nuvem-status-badge" class="status-badge warning">
+            <span class="status-dot"></span> Verificando...
+          </span>
         </div>
+        <div class="conn-pill-sub" id="nuvem-store-name">Loja ID <?= htmlspecialchars($config['nuvemshop']['store_id']) ?></div>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>SKU / Código</th>
-            <th>Código de Barras</th>
-            <th>Descrição do Produto</th>
-            <th>Estoque Nuvemshop</th>
-            <th>Preço</th>
-            <th>Status</th>
-            <th style="text-align: right;">Ações</th>
-          </tr>
-        </thead>
-        <tbody id="products-table-body">
-          <!-- Inserido dinamicamente via app.js -->
-        </tbody>
-      </table>
-    </div>
-  </div>
 
-  <!-- Tab: Cadastrar Produto (Estilo Nuvemshop) -->
-  <div id="tab-novo-produto" class="tab-content">
-    <form id="form-create-full-product" onsubmit="submitFullProduct(event)">
-      <div class="product-create-container">
-        <!-- Coluna Principal (Esquerda) -->
-        <div class="product-create-main">
-
-          <!-- Card 1: Nome e Descrição -->
-          <div class="product-form-card">
-            <div class="product-form-card-header">
-              <div class="product-form-card-title">📝 Nome e Descrição</div>
-              <div class="product-form-card-desc">Informações principais que aparecem na loja e no PDV</div>
-            </div>
-            <div class="form-group">
-              <label for="prod-name"><strong>Nome do Produto *</strong></label>
-              <input type="text" id="prod-name" class="form-control" required placeholder="Ex: Vestido Estampado Bia Flores" style="font-size: 15px; padding: 12px 14px;">
-              <small style="color: var(--text-dim); font-size: 11px; margin-top: 4px; display: block;">
-                O nome principal será usado na Nuvemshop e servirá de base para o nome de cada variação no eGestor.
-              </small>
-            </div>
-            <div class="form-group" style="margin-bottom: 0;">
-              <label for="prod-description">Descrição Completa (Opcional)</label>
-              <textarea id="prod-description" class="form-control" rows="4" placeholder="Descreva os detalhes da peça, tecido, caimento e recomendações..."></textarea>
-            </div>
-          </div>
-
-          <!-- Card 2: Preço e Custos -->
-          <div class="product-form-card">
-            <div class="product-form-card-header">
-              <div class="product-form-card-title">💰 Preços e Custos</div>
-              <div class="product-form-card-desc">Defina o preço de venda para os clientes e o custo para sua gestão</div>
-            </div>
-            <div class="form-grid-2">
-              <div class="form-group">
-                <label for="prod-price"><strong>Preço de Venda (R$) *</strong></label>
-                <input type="number" step="0.01" min="0" id="prod-price" class="form-control" required placeholder="149.90" oninput="onBasePriceChange()">
-                <small style="color: var(--text-dim); font-size: 11px;">Preço exibido na Nuvemshop e no eGestor</small>
-              </div>
-              <div class="form-group">
-                <label for="prod-cost-price">Preço de Custo (R$)</label>
-                <input type="number" step="0.01" min="0" id="prod-cost-price" class="form-control" placeholder="65.00">
-                <small style="color: var(--text-dim); font-size: 11px;">Gravado no eGestor para cálculo de lucro</small>
-              </div>
-            </div>
-          </div>
-
-          <!-- Card 3: Variações (Cor / Modelo / Tamanho) -->
-          <div class="product-form-card">
-            <div class="product-form-card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
-              <div>
-                <div class="product-form-card-title">🎨 Variações (Cores e Modelos/Tamanhos)</div>
-                <div class="product-form-card-desc">Crie seletores de cor e modelo na Nuvemshop mantendo cada item separado no eGestor</div>
-              </div>
-              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; font-weight: 600; color: #fff; background: rgba(255,255,255,0.06); padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
-                <input type="checkbox" id="chk-has-variants" onchange="toggleHasVariants(this.checked)" checked style="width: 16px; height: 16px; cursor: pointer;">
-                <span>Este produto possui variações</span>
-              </label>
-            </div>
-
-            <!-- Bloco de Produto Simples (quando NÃO tiver variações) -->
-            <div id="simple-product-block" style="display: none;">
-              <div class="form-grid-3">
-                <div class="form-group">
-                  <label for="prod-simple-stock"><strong>Estoque Inicial *</strong></label>
-                  <input type="number" step="1" min="0" id="prod-simple-stock" class="form-control" value="1" placeholder="Ex: 10">
-                </div>
-                <div class="form-group">
-                  <label for="prod-simple-sku">SKU / Código Interno</label>
-                  <input type="text" id="prod-simple-sku" class="form-control" placeholder="Ex: VEST-01">
-                  <small style="color: var(--text-dim); font-size: 11px;">Se vazio, usará o código do eGestor</small>
-                </div>
-                <div class="form-group">
-                  <label for="prod-simple-barcode">Código de Barras (EAN)</label>
-                  <input type="text" id="prod-simple-barcode" class="form-control" placeholder="Ex: 789123456789">
-                </div>
-              </div>
-            </div>
-
-            <!-- Bloco de Grade / Variações (quando TIVER variações) -->
-            <div id="variants-product-block">
-              <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
-                Digite as opções de cada propriedade separadas por <strong>vírgula</strong>. As combinações serão geradas automaticamente abaixo:
-              </p>
-
-              <!-- Propriedade 1: Cor -->
-              <div class="variant-prop-box">
-                <div class="form-grid-2">
-                  <div class="form-group" style="margin-bottom: 0;">
-                    <label>Nome da Propriedade 1:</label>
-                    <input type="text" id="prop-1-name" class="form-control" value="Cor" placeholder="Ex: Cor" oninput="generateVariantsTable()">
-                  </div>
-                  <div class="form-group" style="margin-bottom: 0;">
-                    <label>Valores (separados por vírgula):</label>
-                    <input type="text" id="prop-1-values" class="form-control" value="Verde, Rosa, Preto" placeholder="Ex: Verde, Rosa, Preto" oninput="generateVariantsTable()">
-                  </div>
-                </div>
-              </div>
-
-              <!-- Propriedade 2: Tamanho ou Modelo -->
-              <div class="variant-prop-box" id="prop-2-box">
-                <div class="form-grid-2">
-                  <div class="form-group" style="margin-bottom: 0;">
-                    <label>Nome da Propriedade 2:</label>
-                    <input type="text" id="prop-2-name" class="form-control" value="Tamanho" placeholder="Ex: Tamanho ou Modelo" oninput="generateVariantsTable()">
-                  </div>
-                  <div class="form-group" style="margin-bottom: 0;">
-                    <label>Valores (separados por vírgula):</label>
-                    <input type="text" id="prop-2-values" class="form-control" value="P, M, G" placeholder="Ex: P, M, G ou Curto, Longo" oninput="generateVariantsTable()">
-                  </div>
-                </div>
-              </div>
-
-              <!-- Botão para alternar 2ª propriedade ativa/inativa -->
-              <div style="display: flex; justify-content: space-between; align-items: center; margin: 10px 0 14px 0;">
-                <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); cursor: pointer;">
-                  <input type="checkbox" id="chk-enable-prop-2" checked onchange="toggleProp2(this.checked)">
-                  <span>Incluir 2ª Propriedade (Tamanho/Modelo)</span>
-                </label>
-                <button type="button" class="btn btn-secondary btn-sm" onclick="generateVariantsTable()">🔄 Recalcular Combinações</button>
-              </div>
-
-              <!-- Tabela com a matriz de variações -->
-              <div>
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                  <label style="font-weight: 600; font-size: 13px;">
-                    Combinações Geradas (<span id="variants-count-badge">0</span> variações):
-                  </label>
-                  <span style="font-size: 11px; color: var(--text-dim);">Ajuste estoque e preços individuais se necessário</span>
-                </div>
-                <div class="variant-table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Variação</th>
-                        <th style="width: 110px;">Preço (R$)</th>
-                        <th style="width: 90px;">Estoque *</th>
-                        <th style="width: 140px;">SKU (Opcional)</th>
-                        <th style="width: 140px;">Cód. Barras</th>
-                      </tr>
-                    </thead>
-                    <tbody id="variants-tbody">
-                      <!-- Preenchido via app.js -->
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Card 4: Fotos (Opcional) -->
-          <div class="product-form-card">
-            <div class="product-form-card-header">
-              <div class="product-form-card-title">🖼️ Fotos do Produto (Opcional)</div>
-              <div class="product-form-card-desc">Cole links diretos de imagens na web (uma URL por linha)</div>
-            </div>
-            <div class="form-group" style="margin-bottom: 0;">
-              <textarea id="prod-images" class="form-control" rows="3" placeholder="https://exemplo.com/foto1.jpg&#10;https://exemplo.com/foto2.jpg"></textarea>
-            </div>
-          </div>
-
+      <div class="conn-pill">
+        <div class="conn-pill-header">
+          <span class="conn-pill-name">eGestor PDV</span>
+          <span id="egestor-status-badge" class="status-badge warning">
+            <span class="status-dot"></span> Verificando...
+          </span>
         </div>
+        <div class="conn-pill-sub" id="egestor-company-name">Conectando...</div>
+      </div>
 
-        <!-- Coluna Lateral (Direita) -->
-        <div class="product-create-sidebar">
+      <div style="font-size: 11px; color: var(--text-dim); text-align: center; margin-top: 4px;">
+        ⚡ Sincronização automática ativa
+      </div>
+    </div>
+  </aside>
 
-          <!-- Card de Publicação -->
-          <div class="product-form-card" style="position: sticky; top: 20px;">
-            <div class="product-form-card-header">
-              <div class="product-form-card-title">🚀 Publicação</div>
-            </div>
+  <!-- ========================================================
+       ÁREA DE CONTEÚDO PRINCIPAL
+       ======================================================== -->
+  <main class="app-main">
 
-            <div style="margin-bottom: 16px;">
-              <button type="submit" id="btn-submit-product" class="btn-primary-action">
-                💾 Salvar e Cadastrar Produto
-              </button>
-            </div>
+    <!-- Topbar Informativa -->
+    <header class="main-header">
+      <div class="main-header-title">
+        <h1 id="page-current-title">Lista de Produtos</h1>
+        <p id="page-current-desc">Catálogo do eGestor integrado à Nuvemshop com controle unificado de estoques</p>
+      </div>
 
-            <div id="create-product-status-box" style="display: none; padding: 12px; border-radius: var(--radius-sm); font-size: 12px; margin-bottom: 16px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); line-height: 1.5;">
-              <div id="create-product-status-text">Processando...</div>
-            </div>
+      <div class="topbar-stats">
+        <div class="stat-chip" title="Total de itens cadastrados no eGestor">
+          <span>📦 Total no eGestor:</span>
+          <strong id="topbar-total-egestor">...</strong>
+        </div>
+        <div class="stat-chip" title="Total de produtos com sincronização ativa na Nuvemshop">
+          <span>☁️ Na Nuvemshop:</span>
+          <strong id="topbar-total-nuvem">0</strong>
+        </div>
+        <div class="stat-chip" title="Status da última sincronização automática">
+          <span>🔄 Sync:</span>
+          <strong id="topbar-last-sync" style="color: var(--success);">Ao carregar</strong>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="refreshCurrentView()" title="Recarregar dados atuais">
+          🔄 Atualizar
+        </button>
+      </div>
+    </header>
 
-            <!-- Card Explicativo de Integração -->
-            <div class="info-sidebar-box">
-              <h4>🛡️ Como o Middleware processa:</h4>
-              <ul>
-                <li><strong>Nuvemshop:</strong> Cria um anúncio com seletores unificados (Cor e Modelo).</li>
-                <li><strong>eGestor:</strong> Cria cada variação como um produto separado no seu PDV físico.</li>
-                <li><strong>Baixa Direcionada:</strong> Vendas na Nuvemshop abatem o produto exato da cor/modelo no eGestor.</li>
-              </ul>
-            </div>
+    <!-- ========================================================
+         ABA 1: LISTA DE PRODUTOS (CONSOLIDADA: EGESTOR VS NUVEMSHOP)
+         ======================================================== -->
+    <section id="tab-lista-produtos" class="tab-content active">
+      <div class="table-container">
+        
+        <!-- Barra de Filtros -->
+        <div class="table-header-bar">
+          <div class="filter-group">
+            <input type="text" id="search-products-list" class="search-input" placeholder="🔍 Buscar por Código, SKU, Barras ou Nome..." onkeydown="if(event.key==='Enter') loadProductsList(1)">
+            
+            <select id="filter-status-nuvem" class="select-filter" onchange="loadProductsList(1)">
+              <option value="all" selected>⚡ Todos os Produtos do eGestor</option>
+              <option value="in_nuvem">✅ Já na Nuvemshop</option>
+              <option value="missing">⚠️ Não enviados para a Nuvem</option>
+            </select>
+
+            <select id="filter-stock-level" class="select-filter" onchange="loadProductsList(1)">
+              <option value="all">📦 Todo Estoque</option>
+              <option value="has_stock">✅ Com Estoque (&gt; 0)</option>
+              <option value="zero_stock">🛑 Sem Estoque (= 0)</option>
+              <option value="low_stock">⚠️ Estoque Baixo (1 a 3)</option>
+            </select>
+
+            <button class="btn btn-secondary btn-sm" onclick="resetProductsListFilters()">Limpar</button>
+            <button class="btn btn-primary btn-sm" onclick="loadProductsList(1)">Buscar</button>
           </div>
 
-        </div>
-      </div>
-    </form>
-  </div>
-
-  <!-- Tab: Vizor eGestor vs Nuvemshop -->
-  <div id="tab-visor" class="tab-content">
-    <div class="table-container">
-      <div class="table-header" style="flex-wrap: wrap; gap: 12px;">
-        <div>
-          <div style="font-weight: 600; font-size: 15px;">🔍 Vizor Comparativo: Catálogo eGestor ➔ Nuvemshop</div>
-          <div style="font-size: 12px; color: var(--text-dim); margin-top: 3px;">
-            Veja quais produtos do eGestor ainda não estão na Nuvemshop. Envie qualquer produto manualmente ou retire produtos da loja online com 1 clique (o eGestor nunca é alterado).
-          </div>
-        </div>
-        <div class="filter-bar">
-          <input type="text" id="search-visor" class="search-input" placeholder="🔍 Filtrar por Nome, SKU ou Código..." style="min-width: 220px;" onkeydown="if(event.key==='Enter') loadVisorProducts(1)">
-          
-          <select id="filter-visor-status" class="search-input" style="min-width: 190px;" onchange="loadVisorProducts(1)">
-            <option value="missing" selected>⚠️ Não enviados para Nuvem</option>
-            <option value="in_nuvem">✅ Já enviados para a Nuvem</option>
-            <option value="all">⚡ Todos os produtos do eGestor</option>
-          </select>
-
-          <select id="filter-visor-stock" class="search-input" style="min-width: 160px;" onchange="loadVisorProducts(1)">
-            <option value="all">📦 Todo Estoque</option>
-            <option value="has_stock">✅ Com Estoque (&gt; 0)</option>
-            <option value="zero_stock">🛑 Sem Estoque (= 0)</option>
-            <option value="low_stock">⚠️ Estoque Baixo (1 a 3)</option>
-          </select>
-
-          <button class="btn btn-secondary btn-sm" onclick="resetVisorFilters()">Limpar</button>
-          <button class="btn btn-primary btn-sm" onclick="loadVisorProducts(1)">Buscar</button>
-        </div>
-      </div>
-
-      <!-- Resumo do Vizor -->
-      <div style="padding: 10px 16px; background: rgba(0,0,0,0.25); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
-        <span id="visor-summary-text" style="color: var(--text-muted);">Carregando produtos do eGestor...</span>
-        <div id="visor-pagination-top" style="display: flex; gap: 6px; align-items: center;"></div>
-      </div>
-
-      <table>
-        <thead>
-          <tr>
-            <th>Cód. eGestor</th>
-            <th>SKU</th>
-            <th>Código de Barras</th>
-            <th>Descrição do Produto</th>
-            <th>Estoque eGestor</th>
-            <th>Preço (R$)</th>
-            <th>Status na Nuvem</th>
-            <th style="text-align: right;">Ações Manuais</th>
-          </tr>
-        </thead>
-        <tbody id="visor-table-body">
-          <!-- Inserido dinamicamente via app.js -->
-        </tbody>
-      </table>
-
-      <!-- Paginação inferior -->
-      <div style="padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-color); background: rgba(0,0,0,0.15);">
-        <span id="visor-pagination-info" style="font-size: 13px; color: var(--text-dim);">Página 1</span>
-        <div id="visor-pagination-bottom" style="display: flex; gap: 8px;"></div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Tab 2: Logs -->
-  <div id="tab-logs" class="tab-content">
-    <div class="table-container" style="padding: 16px;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px;">
-        <span style="font-weight: 600;">Monitor de Eventos e Requisições</span>
-        <button class="btn btn-secondary btn-sm" onclick="loadLogs()">Limpar / Atualizar</button>
-      </div>
-      <div class="terminal" id="logs-terminal">
-        Carregando logs do sistema...
-      </div>
-    </div>
-  </div>
-
-  <!-- Tab 3: Guia de Instalação -->
-  <div id="tab-guide" class="tab-content">
-    <div class="card" style="line-height: 1.8;">
-      <h2 style="font-size: 18px; margin-bottom: 14px;">📋 Passo a Passo para Ativar no eGestor:</h2>
-      <ol style="padding-left: 20px; color: var(--text-muted); font-size: 14px;">
-        <li>Acesse seu painel do <strong>eGestor</strong> (<a href="https://v4.egestor.com.br/config/#/configGeral" target="_blank" style="color: var(--primary);">Configurações &gt; Webhooks</a>).</li>
-        <li>No campo <strong>Endereço (endpoint)</strong>, cole a URL deste servidor:
-          <div class="endpoint-box" style="margin: 8px 0 14px 0;">
-            <span class="endpoint-url"><?= htmlspecialchars($egestorWebhookUrl) ?></span>
-            <button class="btn btn-secondary btn-sm" onclick="copyToClipboard('<?= htmlspecialchars($egestorWebhookUrl) ?>')">Copiar</button>
-          </div>
-        </li>
-        <li>Confirme que o <strong>Security Token</strong> é: <code style="color: #93c5fd;"><?= htmlspecialchars($config['egestor']['security_token']) ?></code></li>
-        <li>Marque a opção <strong>[X] Enviar como JSON</strong>.</li>
-        <li>Em <strong>Webhooks ativos</strong>, mantenha marcados:
-          <strong style="color: #fff;">[x] Produtos</strong> e <strong style="color: #fff;">[x] Vendas</strong>.
-        </li>
-        <li>Clique no botão verde <strong>Salvar</strong>.</li>
-      </ol>
-
-      <div style="margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border-color);">
-        <h3 style="font-size: 15px; margin-bottom: 8px; color: #fff;">🔑 Como obter o Personal Token do eGestor:</h3>
-        <p style="color: var(--text-muted); font-size: 13px;">
-          O eGestor requer um <strong>Personal Token</strong> para que o middleware consiga ler os detalhes de cada produto (nome, preço, estoque atual) quando o webhook dispara.
-          Acesse: <strong>Configurações &gt; API</strong> no menu do eGestor, gere seu token pessoal e clique na engrenagem ⚙️ no topo deste painel para salvá-lo.
-        </p>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- Modal Configurações -->
-<div id="settings-modal" class="modal-overlay">
-  <div class="modal">
-    <div class="modal-header">
-      <h3>Configurações do Middleware</h3>
-      <button class="modal-close" onclick="closeSettingsModal()">&times;</button>
-    </div>
-    <form onsubmit="saveSettings(event)">
-      <div class="form-group">
-        <label>Personal Token do eGestor (Menu Configurações &gt; API):</label>
-        <textarea id="input-personal-token" class="form-control" rows="3" placeholder="Cole o token JWT gerado no eGestor aqui..."></textarea>
-      </div>
-
-      <div class="form-group" style="margin-top: 16px; padding: 14px; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: var(--radius-sm);">
-        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; margin-bottom: 0;">
-          <input type="checkbox" id="input-sync-only-stock" checked style="margin-top: 3px; width: 16px; height: 16px; cursor: pointer;">
           <div>
-            <strong style="color: #fff; font-size: 13px;">Regra Padrão: Enviar apenas produtos com Estoque &gt; 0 para a Nuvemshop</strong>
-            <p style="font-size: 12px; color: var(--text-dim); margin-top: 4px; line-height: 1.4;">
-              Quando ativado, novos produtos sem estoque ou com estoque negativo no eGestor não poluirão a Nuvemshop. Se um produto já existir na Nuvemshop, o estoque continuará sendo atualizado normalmente.
-            </p>
+            <button class="btn btn-primary btn-sm" onclick="switchToNewProductTab()" style="background: #2563eb;">
+              ➕ Cadastrar Novo
+            </button>
           </div>
-        </label>
-      </div>
+        </div>
 
-      <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
-        <button type="button" class="btn btn-secondary" onclick="closeSettingsModal()">Cancelar</button>
-        <button type="submit" class="btn btn-primary">Salvar Configurações</button>
-      </div>
-    </form>
-  </div>
-</div>
+        <!-- Sub-barra com Contador e Paginação Topo -->
+        <div class="table-subbar">
+          <span id="products-list-summary">Carregando catálogo do eGestor...</span>
+          <div id="pagination-top-btns" class="pagination-buttons"></div>
+        </div>
 
-<!-- Modal Inserir Produto Nuvemshop -->
-<div id="create-product-modal" class="modal-overlay">
-  <div class="modal">
-    <div class="modal-header">
-      <h3>Inserir Novo Produto na Nuvemshop</h3>
-      <button class="modal-close" onclick="closeCreateProductModal()">&times;</button>
-    </div>
-    <form onsubmit="submitCreateProduct(event)">
-      <div class="form-group">
-        <label>Nome do Produto *:</label>
-        <input type="text" name="name" class="form-control" required placeholder="Ex: Vestido Estampado Bia">
-      </div>
-      <div class="form-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-        <div>
-          <label>SKU (Código PDV):</label>
-          <input type="text" name="sku" class="form-control" placeholder="Ex: 2180">
+        <!-- Tabela Consolidada -->
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 100px;">Cód. eGestor</th>
+                <th style="width: 110px;">SKU</th>
+                <th style="width: 130px;">Cód. Barras</th>
+                <th>Descrição do Produto</th>
+                <th style="width: 120px;">Estoque PDV</th>
+                <th style="width: 120px;">Estoque Nuvem</th>
+                <th style="width: 110px;">Preço</th>
+                <th style="width: 170px;">Status Nuvemshop</th>
+                <th style="text-align: right; width: 170px;">Ações</th>
+              </tr>
+            </thead>
+            <tbody id="products-list-tbody">
+              <tr>
+                <td colspan="9" style="text-align: center; color: var(--text-dim); padding: 30px;">
+                  Carregando lista de produtos...
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <div>
-          <label>Código de Barras (EAN):</label>
-          <input type="text" name="barcode" class="form-control" placeholder="Ex: 789123456789">
+
+        <!-- Rodapé de Paginação -->
+        <div class="table-pagination-footer">
+          <span id="pagination-bottom-info">Página 1</span>
+          <div id="pagination-bottom-btns" class="pagination-buttons"></div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ========================================================
+         ABA 2: CADASTRAR PRODUTO (NOS MOLDES DA NUVEMSHOP)
+         ======================================================== -->
+    <section id="tab-novo-produto" class="tab-content">
+      <form id="form-create-full-product" onsubmit="submitFullProduct(event)">
+        <div class="product-create-container">
+          
+          <!-- Coluna Principal (Esquerda) -->
+          <div class="product-create-main">
+
+            <!-- Card 1: Nome e Descrição -->
+            <div class="product-form-card">
+              <div class="product-form-card-header">
+                <div class="product-form-card-title">📝 Nome e Descrição</div>
+                <div class="product-form-card-desc">Informações principais que aparecem na loja virtual e no PDV físico</div>
+              </div>
+              <div class="form-group">
+                <label for="prod-name">Nome do Produto *</label>
+                <input type="text" id="prod-name" class="form-control" required placeholder="Ex: Vestido Longo Bia Flores" style="font-size: 15px; padding: 12px 14px;">
+                <small style="color: var(--text-dim); font-size: 12px; margin-top: 4px; display: block;">
+                  O nome principal será usado na Nuvemshop e servirá de base para o nome de cada variação no eGestor.
+                </small>
+              </div>
+              <div class="form-group" style="margin-bottom: 0;">
+                <label for="prod-description">Descrição Completa (Opcional)</label>
+                <textarea id="prod-description" class="form-control" rows="4" placeholder="Descreva os detalhes da peça, tecido, caimento e recomendações..."></textarea>
+              </div>
+            </div>
+
+            <!-- Card 2: Preço e Custos -->
+            <div class="product-form-card">
+              <div class="product-form-card-header">
+                <div class="product-form-card-title">💰 Preços e Custos</div>
+                <div class="product-form-card-desc">Defina o preço de venda para os clientes e o custo para sua gestão financeira</div>
+              </div>
+              <div class="form-grid-2">
+                <div class="form-group">
+                  <label for="prod-price">Preço de Venda (R$) *</label>
+                  <input type="number" step="0.01" min="0" id="prod-price" class="form-control" required placeholder="149.90" oninput="onBasePriceChange()">
+                  <small style="color: var(--text-dim); font-size: 11px;">Preço exibido na Nuvemshop e no eGestor</small>
+                </div>
+                <div class="form-group">
+                  <label for="prod-cost-price">Preço de Custo (R$)</label>
+                  <input type="number" step="0.01" min="0" id="prod-cost-price" class="form-control" placeholder="65.00">
+                  <small style="color: var(--text-dim); font-size: 11px;">Gravado no eGestor para cálculo de lucro</small>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 3: Variações (Cores e Tamanhos/Modelos) -->
+            <div class="product-form-card">
+              <div class="product-form-card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                <div>
+                  <div class="product-form-card-title">🎨 Variações (Cores e Tamanhos)</div>
+                  <div class="product-form-card-desc">Crie seletores de cor e tamanho na Nuvemshop mantendo cada item separado no eGestor</div>
+                </div>
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; font-weight: 600; color: var(--text-main); background: #f8fafc; padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+                  <input type="checkbox" id="chk-has-variants" onchange="toggleHasVariants(this.checked)" checked style="width: 16px; height: 16px; cursor: pointer;">
+                  <span>Este produto possui variações</span>
+                </label>
+              </div>
+
+              <!-- Bloco de Produto Simples (quando NÃO tiver variações) -->
+              <div id="simple-product-block" style="display: none;">
+                <div class="form-grid-3">
+                  <div class="form-group">
+                    <label for="prod-simple-stock">Estoque Inicial *</label>
+                    <input type="number" step="1" min="0" id="prod-simple-stock" class="form-control" value="1" placeholder="Ex: 10">
+                  </div>
+                  <div class="form-group">
+                    <label for="prod-simple-sku">SKU / Código Interno</label>
+                    <input type="text" id="prod-simple-sku" class="form-control" placeholder="Ex: VEST-01">
+                    <small style="color: var(--text-dim); font-size: 11px;">Se vazio, usará o código do eGestor</small>
+                  </div>
+                  <div class="form-group">
+                    <label for="prod-simple-barcode">Código de Barras (EAN)</label>
+                    <input type="text" id="prod-simple-barcode" class="form-control" placeholder="Ex: 789123456789">
+                  </div>
+                </div>
+              </div>
+
+              <!-- Bloco de Grade / Variações (quando TIVER variações) -->
+              <div id="variants-product-block">
+                <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
+                  Digite as opções de cada propriedade separadas por <strong>vírgula</strong>. As combinações serão geradas automaticamente abaixo:
+                </p>
+
+                <!-- Propriedade 1: Cor -->
+                <div class="variant-prop-box">
+                  <div class="form-grid-2">
+                    <div class="form-group" style="margin-bottom: 0;">
+                      <label>Nome da Propriedade 1:</label>
+                      <input type="text" id="prop-1-name" class="form-control" value="Cor" placeholder="Ex: Cor" oninput="generateVariantsTable()">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                      <label>Valores (separados por vírgula):</label>
+                      <input type="text" id="prop-1-values" class="form-control" value="Verde, Rosa, Preto" placeholder="Ex: Verde, Rosa, Preto" oninput="generateVariantsTable()">
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Propriedade 2: Tamanho ou Modelo -->
+                <div class="variant-prop-box" id="prop-2-box">
+                  <div class="form-grid-2">
+                    <div class="form-group" style="margin-bottom: 0;">
+                      <label>Nome da Propriedade 2:</label>
+                      <input type="text" id="prop-2-name" class="form-control" value="Tamanho" placeholder="Ex: Tamanho ou Modelo" oninput="generateVariantsTable()">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 0;">
+                      <label>Valores (separados por vírgula):</label>
+                      <input type="text" id="prop-2-values" class="form-control" value="P, M, G" placeholder="Ex: P, M, G ou Curto, Longo" oninput="generateVariantsTable()">
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Alternar 2ª Propriedade -->
+                <div style="display: flex; justify-content: space-between; align-items: center; margin: 10px 0 14px 0;">
+                  <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); cursor: pointer;">
+                    <input type="checkbox" id="chk-enable-prop-2" checked onchange="toggleProp2(this.checked)">
+                    <span>Incluir 2ª Propriedade (Tamanho/Modelo)</span>
+                  </label>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="generateVariantsTable()">🔄 Recalcular Combinações</button>
+                </div>
+
+                <!-- Tabela de Combinações Geradas -->
+                <div>
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                    <label style="font-weight: 600; font-size: 13px; color: var(--text-main);">
+                      Combinações Geradas (<span id="variants-count-badge" style="color: var(--primary); font-weight: 700;">0</span> variações):
+                    </label>
+                    <span style="font-size: 11px; color: var(--text-dim);">Ajuste estoque e preços individuais se necessário</span>
+                  </div>
+                  <div class="variant-table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Variação</th>
+                          <th style="width: 120px;">Preço (R$)</th>
+                          <th style="width: 100px;">Estoque *</th>
+                          <th style="width: 140px;">SKU (Opcional)</th>
+                          <th style="width: 140px;">Cód. Barras</th>
+                        </tr>
+                      </thead>
+                      <tbody id="variants-tbody">
+                        <!-- Preenchido dinamicamente via app.js -->
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 4: Fotos (Opcional) -->
+            <div class="product-form-card">
+              <div class="product-form-card-header">
+                <div class="product-form-card-title">🖼️ Fotos do Produto (Opcional)</div>
+                <div class="product-form-card-desc">Cole links diretos de imagens na web (uma URL por linha)</div>
+              </div>
+              <div class="form-group" style="margin-bottom: 0;">
+                <textarea id="prod-images" class="form-control" rows="3" placeholder="https://exemplo.com/foto1.jpg&#10;https://exemplo.com/foto2.jpg"></textarea>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Coluna Lateral (Direita): Publicação -->
+          <div class="product-create-sidebar">
+            <div class="product-form-card" style="position: sticky; top: 20px;">
+              <div class="product-form-card-header">
+                <div class="product-form-card-title">🚀 Publicação</div>
+              </div>
+
+              <div style="margin-bottom: 16px;">
+                <button type="submit" id="btn-submit-product" class="btn-primary-action">
+                  💾 Salvar e Cadastrar Produto
+                </button>
+              </div>
+
+              <div id="create-product-status-box" style="display: none; padding: 12px; border-radius: var(--radius-sm); font-size: 12px; margin-bottom: 16px; background: #f8fafc; border: 1px solid var(--border-color); line-height: 1.5;">
+                <div id="create-product-status-text">Processando...</div>
+              </div>
+
+              <div class="info-sidebar-box">
+                <h4>🛡️ Como o Middleware processa:</h4>
+                <ul>
+                  <li><strong>eGestor:</strong> Cria cada variação como um produto separado no seu PDV com estoque independente.</li>
+                  <li><strong>Nuvemshop:</strong> Cria um produto unificado com a grade completa (Cor e Tamanho) em uma única chamada.</li>
+                  <li><strong>Baixa Precisa:</strong> Vendas na Nuvemshop dão baixa no item exato do eGestor.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </form>
+    </section>
+
+    <!-- ========================================================
+         ABA 3: LOGS DO SISTEMA
+         ======================================================== -->
+    <section id="tab-logs" class="tab-content">
+      <div class="table-container" style="padding: 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+          <div>
+            <h3 style="font-size: 16px; font-weight: 700;">Monitor de Eventos e Requisições em Tempo Real</h3>
+            <p style="font-size: 12px; color: var(--text-muted);">Registro de webhooks, baixas de estoque de vendas e sincronizações</p>
+          </div>
+          <button class="btn btn-secondary btn-sm" onclick="loadLogs()">🔄 Atualizar Logs</button>
+        </div>
+        <div class="terminal" id="logs-terminal">
+          Carregando registros do sistema...
         </div>
       </div>
-      <div class="form-group" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-        <div>
-          <label>Preço de Venda (R$):</label>
-          <input type="number" step="0.01" name="price" class="form-control" required placeholder="149.90">
+    </section>
+
+    <!-- ========================================================
+         ABA 4: CONFIGURAÇÕES E WEBHOOKS
+         ======================================================== -->
+    <section id="tab-config" class="tab-content">
+      <div class="product-form-card" style="max-width: 800px;">
+        <div class="product-form-card-header">
+          <div class="product-form-card-title">⚙️ Configurações Gerais &amp; Webhooks</div>
+          <div class="product-form-card-desc">Parâmetros de conexão e chaves de integração</div>
         </div>
-        <div>
-          <label>Estoque Inicial:</label>
-          <input type="number" name="stock" class="form-control" required placeholder="5">
+
+        <form onsubmit="saveSettings(event)">
+          <div class="form-group">
+            <label for="input-personal-token">Personal Token do eGestor (Menu Configurações &gt; API):</label>
+            <textarea id="input-personal-token" class="form-control" rows="3" placeholder="Cole o token JWT gerado no eGestor aqui..."></textarea>
+            <small style="color: var(--text-dim); font-size: 12px; margin-top: 4px; display: block;">
+              Necessário para que o middleware consulte e salve itens automaticamente no eGestor.
+            </small>
+          </div>
+
+          <div class="form-group" style="padding: 14px; background: #f8fafc; border: 1px solid var(--border-color); border-radius: var(--radius-sm); margin-top: 16px;">
+            <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; margin-bottom: 0;">
+              <input type="checkbox" id="input-sync-only-stock" checked style="margin-top: 3px; width: 16px; height: 16px; cursor: pointer;">
+              <div>
+                <strong style="color: var(--text-main); font-size: 13px;">Regra Padrão: Enviar apenas produtos com Estoque &gt; 0 para a Nuvemshop</strong>
+                <p style="font-size: 12px; color: var(--text-muted); margin-top: 4px; line-height: 1.4;">
+                  Quando ativado, novos produtos com estoque 0 no eGestor não serão enviados automaticamente para a Nuvemshop. Se o produto já existir na loja, o estoque continuará sendo atualizado normalmente.
+                </p>
+              </div>
+            </label>
+          </div>
+
+          <div style="margin-top: 20px;">
+            <button type="submit" class="btn btn-primary">Salvar Configurações</button>
+          </div>
+        </form>
+
+        <hr style="border: none; border-top: 1px solid var(--border-color); margin: 28px 0;">
+
+        <!-- Endpoints de Webhook -->
+        <h4 style="font-size: 14px; font-weight: 700; margin-bottom: 12px;">🔗 URLs de Webhook para Configuração</h4>
+        
+        <div class="form-group">
+          <label>Webhook eGestor (Insira nas configurações de Webhooks do eGestor):</label>
+          <div class="endpoint-box">
+            <span class="endpoint-url" id="egestor-url-text"><?= htmlspecialchars($egestorWebhookUrl) ?></span>
+            <button class="btn btn-secondary btn-sm" onclick="copyToClipboard('<?= htmlspecialchars($egestorWebhookUrl) ?>', 'URL do eGestor copiada!')">Copiar</button>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Webhook Nuvemshop (Eventos de pedidos e estoque):</label>
+          <div class="endpoint-box">
+            <span class="endpoint-url" id="nuvem-url-text"><?= htmlspecialchars($nuvemshopWebhookUrl) ?></span>
+            <button class="btn btn-secondary btn-sm" onclick="copyToClipboard('<?= htmlspecialchars($nuvemshopWebhookUrl) ?>', 'URL da Nuvemshop copiada!')">Copiar</button>
+          </div>
+          <button class="btn btn-secondary btn-sm" style="margin-top: 10px;" onclick="registerNuvemshopWebhooks()">
+            ⚡ Ativar Webhooks na Nuvemshop Automaticamente
+          </button>
         </div>
       </div>
-      <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
-        <button type="button" class="btn btn-secondary" onclick="closeCreateProductModal()">Cancelar</button>
-        <button type="submit" class="btn btn-primary">Cadastrar Produto</button>
+    </section>
+
+    <!-- ========================================================
+         ABA 5: GUIA DO EGESTOR
+         ======================================================== -->
+    <section id="tab-guide" class="tab-content">
+      <div class="product-form-card" style="max-width: 800px; line-height: 1.8;">
+        <h2 style="font-size: 18px; font-weight: 700; margin-bottom: 14px;">📋 Passo a Passo para Ativar no eGestor:</h2>
+        <ol style="padding-left: 20px; color: var(--text-muted); font-size: 14px;">
+          <li>Acesse seu painel do <strong>eGestor</strong> (<a href="https://v4.egestor.com.br/config/#/configGeral" target="_blank" style="color: var(--primary);">Configurações &gt; Webhooks</a>).</li>
+          <li>No campo <strong>Endereço (endpoint)</strong>, cole a URL deste servidor:
+            <div class="endpoint-box" style="margin: 8px 0 14px 0;">
+              <span class="endpoint-url"><?= htmlspecialchars($egestorWebhookUrl) ?></span>
+              <button class="btn btn-secondary btn-sm" onclick="copyToClipboard('<?= htmlspecialchars($egestorWebhookUrl) ?>')">Copiar</button>
+            </div>
+          </li>
+          <li>Confirme que o <strong>Security Token</strong> é: <code style="color: var(--primary); font-weight: 600;"><?= htmlspecialchars($config['egestor']['security_token']) ?></code></li>
+          <li>Marque a opção <strong>[X] Enviar como JSON</strong>.</li>
+          <li>Em <strong>Webhooks ativos</strong>, mantenha marcados:
+            <strong style="color: var(--text-main);">[x] Produtos</strong> e <strong style="color: var(--text-main);">[x] Vendas</strong>.
+          </li>
+          <li>Clique no botão verde <strong>Salvar</strong>.</li>
+        </ol>
+
+        <div style="margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border-color);">
+          <h3 style="font-size: 15px; font-weight: 700; margin-bottom: 8px; color: var(--text-main);">🔑 Como obter o Personal Token do eGestor:</h3>
+          <p style="color: var(--text-muted); font-size: 13px;">
+            O eGestor requer um <strong>Personal Token</strong> para que o middleware consiga ler os detalhes de cada produto (nome, preço, estoque atual) quando o webhook dispara.
+            Acesse: <strong>Configurações &gt; API</strong> no menu do eGestor, gere seu token pessoal e cole na aba <strong>Configurações &amp; Webhooks</strong> ao lado.
+          </p>
+        </div>
       </div>
-    </form>
-  </div>
+    </section>
+
+  </main>
+
 </div>
 
 <!-- Modal Envio Manual de Produto -->
 <div id="manual-send-modal" class="modal-overlay">
-  <div class="modal" style="max-width: 520px;">
+  <div class="modal" style="max-width: 500px;">
     <div class="modal-header">
       <h3>📤 Envio Manual de Produto para a Nuvemshop</h3>
       <button class="modal-close" onclick="closeManualSendModal()">&times;</button>
     </div>
     <form onsubmit="submitManualSend(event)">
       <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
-        Informe o <strong>Código (ID)</strong> do produto no eGestor para importá-lo ou sincronizá-lo diretamente com a Nuvemshop.
+        Informe o <strong>Código (ID)</strong> do produto no eGestor para sincronizá-lo diretamente com a Nuvemshop.
       </p>
       <div class="form-group">
         <label>Código do Produto no eGestor (ID) *:</label>
         <input type="text" id="manual-send-codigo" class="form-control" required placeholder="Ex: 2180">
       </div>
-      <div class="form-group" style="padding: 12px; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: var(--radius-sm);">
-        <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; font-size: 13px; color: #fff; margin-bottom: 0;">
+      <div class="form-group" style="padding: 12px; background: #f8fafc; border: 1px solid var(--border-color); border-radius: var(--radius-sm);">
+        <label style="display: flex; align-items: flex-start; gap: 8px; cursor: pointer; font-size: 13px; color: var(--text-main); margin-bottom: 0;">
           <input type="checkbox" id="manual-send-force" checked style="margin-top: 3px;">
           <div>
-            <strong>Forçar envio mesmo se o produto estiver com estoque zerado</strong>
-            <p style="font-size: 12px; color: var(--text-dim); margin-top: 2px;">
-              Se marcado, enviará o produto para a Nuvemshop mesmo se a regra padrão de "apenas com estoque" estiver ativa.
+            <strong>Forçar envio mesmo com estoque zerado</strong>
+            <p style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+              Se marcado, enviará o produto para a Nuvemshop mesmo se a regra padrão estiver ativa.
             </p>
           </div>
         </label>
       </div>
-      <p style="font-size: 12px; color: #93c5fd; margin-top: 10px;">
-        🛡️ <strong>Garantia:</strong> O seu eGestor permanece 100% inalterado (apenas leitura). O item é enviado exclusivamente para a Nuvemshop.
-      </p>
       <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px;">
         <button type="button" class="btn btn-secondary" onclick="closeManualSendModal()">Cancelar</button>
-        <button type="submit" class="btn btn-success" id="btn-manual-send-submit">📤 Enviar Agora</button>
+        <button type="submit" class="btn btn-primary" id="btn-manual-send-submit">📤 Enviar Agora</button>
       </div>
     </form>
-  </div>
-</div>
-
-<!-- Modal Testar Webhook -->
-<div id="test-webhook-modal" class="modal-overlay">
-  <div class="modal">
-    <div class="modal-header">
-      <h3>Simular Webhook do eGestor</h3>
-      <button class="modal-close" onclick="closeTestWebhookModal()">&times;</button>
-    </div>
-    <form onsubmit="submitTestWebhook(event)">
-      <div class="form-group">
-        <label>Código do Produto no eGestor (ID):</label>
-        <input type="text" id="test-webhook-codigo" class="form-control" required placeholder="Ex: 1">
-      </div>
-      <p style="font-size: 12px; color: var(--text-dim); margin-bottom: 16px;">
-        Isto enviará uma requisição simulada exatamente como o eGestor envia quando um produto tem o estoque ou preço alterado no PDV.
-      </p>
-      <div style="display: flex; justify-content: flex-end; gap: 10px;">
-        <button type="button" class="btn btn-secondary" onclick="closeTestWebhookModal()">Cancelar</button>
-        <button type="submit" class="btn btn-primary">Disparar Teste</button>
-      </div>
-    </form>
-  </div>
-<!-- Modal Importação eGestor -> Nuvemshop -->
-<div id="export-egestor-modal" class="modal-overlay">
-  <div class="modal" style="max-width: 650px;">
-    <div class="modal-header">
-      <h3>🚀 Importar Catálogo do eGestor para Nuvemshop</h3>
-      <button class="modal-close" onclick="closeExportModal()">&times;</button>
-    </div>
-    
-    <div id="export-setup-view">
-      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
-        O seu eGestor possui <strong>2.369 produtos</strong> cadastrados. Escolha como deseja importar:
-      </p>
-
-      <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 18px;">
-        <label style="display: flex; align-items: flex-start; gap: 10px; cursor: pointer; margin-bottom: 10px;">
-          <input type="checkbox" id="check-only-stock" checked style="margin-top: 3px;">
-          <div>
-            <strong style="color: #fff; font-size: 14px;">Apenas produtos com Estoque &gt; 0 (Recomendado)</strong>
-            <p style="font-size: 12px; color: var(--text-dim); margin-top: 2px;">
-              Evita cadastrar peças antigas/descontinuadas que estão zeradas. Se uma peça já existir na Nuvemshop, o estoque será atualizado normalmente.
-            </p>
-          </div>
-        </label>
-      </div>
-
-      <div style="display: flex; justify-content: flex-end; gap: 10px;">
-        <button type="button" class="btn btn-secondary" onclick="closeExportModal()">Cancelar</button>
-        <button type="button" class="btn btn-primary" onclick="startBatchExport()">Iniciar Importação</button>
-      </div>
-    </div>
-
-    <div id="export-progress-view" style="display: none;">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-        <span id="export-progress-status" style="font-size: 13px; font-weight: 500;">Processando página 1 de 48...</span>
-        <span id="export-progress-percent" style="font-size: 13px; font-weight: 700; color: var(--primary);">0%</span>
-      </div>
-
-      <div style="width: 100%; height: 10px; background: rgba(255,255,255,0.1); border-radius: 5px; overflow: hidden; margin-bottom: 16px;">
-        <div id="export-progress-bar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #6366f1, #10b981); transition: width 0.3s ease;"></div>
-      </div>
-
-      <!-- Contadores -->
-      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; text-align: center;">
-        <div style="background: rgba(0,0,0,0.3); padding: 8px; border-radius: var(--radius-sm);">
-          <div style="font-size: 11px; color: var(--text-dim);">Processados</div>
-          <div style="font-size: 16px; font-weight: 700;" id="cnt-processed">0</div>
-        </div>
-        <div style="background: rgba(16, 185, 129, 0.1); padding: 8px; border-radius: var(--radius-sm); border: 1px solid rgba(16, 185, 129, 0.2);">
-          <div style="font-size: 11px; color: #86efac;">Novos Criados</div>
-          <div style="font-size: 16px; font-weight: 700; color: #10b981;" id="cnt-created">0</div>
-        </div>
-        <div style="background: rgba(99, 102, 241, 0.1); padding: 8px; border-radius: var(--radius-sm); border: 1px solid rgba(99, 102, 241, 0.2);">
-          <div style="font-size: 11px; color: #93c5fd;">Atualizados</div>
-          <div style="font-size: 16px; font-weight: 700; color: #6366f1;" id="cnt-updated">0</div>
-        </div>
-        <div style="background: rgba(245, 158, 11, 0.1); padding: 8px; border-radius: var(--radius-sm); border: 1px solid rgba(245, 158, 11, 0.2);">
-          <div style="font-size: 11px; color: #fde047;">Ignorados (0 est.)</div>
-          <div style="font-size: 16px; font-weight: 700; color: #f59e0b;" id="cnt-skipped">0</div>
-        </div>
-      </div>
-
-      <!-- Live Log Terminal -->
-      <div class="terminal" id="export-live-terminal" style="max-height: 180px; font-size: 11px; margin-bottom: 16px;">
-        Iniciando...
-      </div>
-
-      <div style="display: flex; justify-content: flex-end; gap: 10px;">
-        <button type="button" class="btn btn-secondary btn-sm" id="btn-cancel-export" onclick="stopBatchExport()">Interromper</button>
-      </div>
-    </div>
   </div>
 </div>
 

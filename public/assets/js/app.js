@@ -1,55 +1,117 @@
 document.addEventListener('DOMContentLoaded', () => {
     initTabs();
     loadStatus();
-    loadProducts();
-    loadLogs();
+    loadProductsList(1);
     initNewProductForm();
 
     // Auto-refresh status e logs a cada 30 segundos
     setInterval(() => {
         loadStatus(true);
-        if (document.getElementById('tab-logs').classList.contains('active')) {
+        const logsTab = document.getElementById('tab-logs');
+        if (logsTab && logsTab.classList.contains('active')) {
             loadLogs();
         }
     }, 30000);
-
-    // Eventos de busca
-    const searchInput = document.getElementById('search-products');
-    if (searchInput) {
-        let debounceTimer;
-        searchInput.addEventListener('input', (e) => {
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => {
-                loadProducts(e.target.value);
-            }, 300);
-        });
-    }
 });
 
+// ========================================================
+// CONTROLE DE NAVEGAÇÃO LATERAL (TABS)
+// ========================================================
+const pageHeaders = {
+    'tab-lista-produtos': {
+        title: 'Lista de Produtos',
+        desc: 'Catálogo do eGestor integrado à Nuvemshop com controle unificado de estoques'
+    },
+    'tab-novo-produto': {
+        title: 'Cadastrar Produto',
+        desc: 'Cadastro simultâneo no eGestor e anúncio com grade unificada na Nuvemshop'
+    },
+    'tab-logs': {
+        title: 'Logs do Sistema',
+        desc: 'Monitor de eventos, webhooks e requisições em tempo real'
+    },
+    'tab-config': {
+        title: 'Configurações & Webhooks',
+        desc: 'Parâmetros de conexão, chaves de API e URLs de webhooks'
+    },
+    'tab-guide': {
+        title: 'Guia de Configuração do eGestor',
+        desc: 'Passo a passo para ativar o envio automático de webhooks no eGestor'
+    }
+};
+
 function initTabs() {
-    const tabs = document.querySelectorAll('.tab-btn');
-    tabs.forEach(tab => {
-        tab.addEventListener('click', () => {
-            tabs.forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-
-            tab.classList.add('active');
-            const targetId = tab.getAttribute('data-tab');
-            const targetContent = document.getElementById(targetId);
-            if (targetContent) {
-                targetContent.classList.add('active');
-            }
-
-            if (targetId === 'tab-logs') {
-                loadLogs();
-            }
-            if (targetId === 'tab-novo-produto') {
-                generateVariantsTable();
-            }
+    const navButtons = document.querySelectorAll('.nav-link-btn');
+    navButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const targetId = btn.getAttribute('data-tab');
+            switchTab(targetId);
         });
     });
 }
 
+function switchTab(targetId) {
+    const navButtons = document.querySelectorAll('.nav-link-btn');
+    const tabContents = document.querySelectorAll('.tab-content');
+
+    navButtons.forEach(b => {
+        if (b.getAttribute('data-tab') === targetId) {
+            b.classList.add('active');
+        } else {
+            b.classList.remove('active');
+        }
+    });
+
+    tabContents.forEach(c => {
+        if (c.id === targetId) {
+            c.classList.add('active');
+        } else {
+            c.classList.remove('active');
+        }
+    });
+
+    // Atualiza cabeçalho da página
+    const titleEl = document.getElementById('page-current-title');
+    const descEl = document.getElementById('page-current-desc');
+    const meta = pageHeaders[targetId];
+    if (meta && titleEl && descEl) {
+        titleEl.textContent = meta.title;
+        descEl.textContent = meta.desc;
+    }
+
+    if (targetId === 'tab-lista-produtos') {
+        loadProductsList(window.currentProductsPage || 1);
+    } else if (targetId === 'tab-novo-produto') {
+        generateVariantsTable();
+    } else if (targetId === 'tab-logs') {
+        loadLogs();
+    }
+}
+
+function switchToNewProductTab() {
+    switchTab('tab-novo-produto');
+    setTimeout(() => {
+        const nameInput = document.getElementById('prod-name');
+        if (nameInput) nameInput.focus();
+    }, 100);
+}
+
+function refreshCurrentView() {
+    loadStatus(true);
+    const activeTab = document.querySelector('.tab-content.active');
+    if (activeTab) {
+        if (activeTab.id === 'tab-lista-produtos') {
+            loadProductsList(window.currentProductsPage || 1);
+        } else if (activeTab.id === 'tab-logs') {
+            loadLogs();
+        }
+    }
+    showToast('Dados atualizados com sucesso!', 'info');
+}
+
+// ========================================================
+// TOAST NOTIFICAÇÕES
+// ========================================================
 function showToast(message, type = 'info') {
     const container = document.getElementById('toast-container');
     if (!container) return;
@@ -80,348 +142,286 @@ function copyToClipboard(text, message = 'Copiado com sucesso!') {
     });
 }
 
+function escapeHtml(text) {
+    if (text === null || text === undefined) return '';
+    return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+// ========================================================
+// STATUS E CONEXÕES
+// ========================================================
 async function loadStatus(silent = false) {
     try {
         const res = await fetch('api.php?action=status');
         const data = await res.json();
 
         if (data.success) {
-            // Nuvemshop status
+            // Nuvemshop
             const nuvemBadge = document.getElementById('nuvem-status-badge');
             const nuvemStore = document.getElementById('nuvem-store-name');
             if (data.nuvemshop.connected) {
                 nuvemBadge.className = 'status-badge online';
-                nuvemBadge.innerHTML = '<span class="status-dot"></span> Conectado';
+                nuvemBadge.innerHTML = '<span class="status-dot"></span> Online';
                 nuvemStore.textContent = data.nuvemshop.store_name || `Loja ID ${data.nuvemshop.store_id}`;
             } else {
                 nuvemBadge.className = 'status-badge offline';
-                nuvemBadge.innerHTML = '<span class="status-dot"></span> Desconectado';
-                nuvemStore.textContent = data.nuvemshop.error || 'Erro de credencial';
+                nuvemBadge.innerHTML = '<span class="status-dot"></span> Erro';
+                nuvemStore.textContent = data.nuvemshop.error || 'Desconectado';
             }
 
-            // eGestor status
+            // eGestor
             const egestorBadge = document.getElementById('egestor-status-badge');
-            const egestorInfo = document.getElementById('egestor-company-name');
+            const egestorCompany = document.getElementById('egestor-company-name');
             if (data.egestor.connected) {
                 egestorBadge.className = 'status-badge online';
-                egestorBadge.innerHTML = '<span class="status-dot"></span> Conectado';
-                egestorInfo.textContent = data.egestor.company_name || 'Conexão ativa';
-            } else if (!data.egestor.has_token) {
-                egestorBadge.className = 'status-badge warning';
-                egestorBadge.innerHTML = '<span class="status-dot"></span> Token Ausente';
-                egestorInfo.textContent = 'Insira o Personal Token nas configurações';
+                egestorBadge.innerHTML = '<span class="status-dot"></span> Online';
+                egestorCompany.textContent = data.egestor.company_name || 'Conectado';
             } else {
                 egestorBadge.className = 'status-badge offline';
-                egestorBadge.innerHTML = '<span class="status-dot"></span> Erro de Conexão';
-                egestorInfo.textContent = data.egestor.error || 'Falha ao autenticar';
+                egestorBadge.innerHTML = '<span class="status-dot"></span> Erro';
+                egestorCompany.textContent = data.egestor.error || 'Token Inválido';
             }
 
-            // Stats
-            document.getElementById('stat-total-products').textContent = data.stats.total_mapped;
-            document.getElementById('stat-last-sync').textContent = data.stats.last_sync ? data.stats.last_sync : 'Nenhuma';
-            document.getElementById('stat-errors').textContent = data.stats.errors_24h;
+            // Estatísticas Topbar
+            const topbarNuvem = document.getElementById('topbar-total-nuvem');
+            if (topbarNuvem) {
+                topbarNuvem.textContent = data.stats.total_mapped.toLocaleString();
+            }
 
-            // Configuração padrão de estoque
-            if (data.sync_only_with_stock !== undefined) {
-                window.syncOnlyWithStock = !!data.sync_only_with_stock;
-                const settingCheck = document.getElementById('input-sync-only-stock');
-                if (settingCheck) settingCheck.checked = window.syncOnlyWithStock;
-                const modalCheck = document.getElementById('check-only-stock');
-                if (modalCheck) modalCheck.checked = window.syncOnlyWithStock;
+            const topbarLastSync = document.getElementById('topbar-last-sync');
+            if (topbarLastSync && data.stats.last_sync) {
+                const parts = data.stats.last_sync.split(' ');
+                topbarLastSync.textContent = parts[1] || 'Hoje';
+            }
+
+            // Regra no form de config
+            const syncRuleEl = document.getElementById('input-sync-only-stock');
+            if (syncRuleEl && data.sync_only_with_stock !== undefined) {
+                syncRuleEl.checked = data.sync_only_with_stock;
             }
         }
     } catch (err) {
-        if (!silent) showToast('Erro ao consultar status da API', 'error');
+        if (!silent) {
+            console.error('Falha ao checar status:', err);
+        }
     }
 }
 
-let debounceTimerProducts = null;
-function debounceLoadProducts() {
-    clearTimeout(debounceTimerProducts);
-    debounceTimerProducts = setTimeout(() => {
-        loadProducts();
-    }, 300);
-}
+// ========================================================
+// LISTA DE PRODUTOS CONSOLIDADA (EGESTOR VS NUVEMSHOP)
+// ========================================================
+window.currentProductsPage = 1;
 
-function resetProductsFilters() {
-    const s = document.getElementById('search-products');
-    if (s) s.value = '';
-    const st = document.getElementById('filter-products-stock');
-    if (st) st.value = 'all';
-    const sta = document.getElementById('filter-products-status');
-    if (sta) sta.value = 'all';
-    loadProducts();
-}
+async function loadProductsList(page = 1) {
+    window.currentProductsPage = page;
+    const tableBody = document.getElementById('products-list-tbody');
+    const summaryText = document.getElementById('products-list-summary');
+    const pagTop = document.getElementById('pagination-top-btns');
+    const pagBottom = document.getElementById('pagination-bottom-btns');
+    const pagInfo = document.getElementById('pagination-bottom-info');
 
-async function loadProducts() {
-    const tableBody = document.getElementById('products-table-body');
     if (!tableBody) return;
 
-    tableBody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 25px;">Carregando produtos...</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-dim); padding: 30px;">Consultando produtos no eGestor...</td></tr>';
+    if (summaryText) summaryText.textContent = 'Consultando API do eGestor...';
 
-    const searchInput = document.getElementById('search-products');
-    const query = searchInput ? searchInput.value.trim() : '';
-    const stockEl = document.getElementById('filter-products-stock');
-    const stock = stockEl ? stockEl.value : 'all';
-    const statusEl = document.getElementById('filter-products-status');
+    const filterInput = document.getElementById('search-products-list');
+    const filter = filterInput ? filterInput.value.trim() : '';
+    const statusEl = document.getElementById('filter-status-nuvem');
     const status = statusEl ? statusEl.value : 'all';
+    const stockEl = document.getElementById('filter-stock-level');
+    const stock = stockEl ? stockEl.value : 'all';
 
     try {
-        const params = new URLSearchParams({ action: 'products' });
-        if (query) params.append('search', query);
-        if (stock !== 'all') params.append('stock', stock);
-        if (status !== 'all') params.append('status', status);
+        const params = new URLSearchParams({
+            action: 'egestor_vs_nuvem',
+            page: page,
+            filter: filter,
+            status: status,
+            stock: stock
+        });
 
         const res = await fetch(`api.php?${params.toString()}`);
         const data = await res.json();
 
-        if (data.success && data.products.length > 0) {
-            tableBody.innerHTML = data.products.map(p => {
-                const stockVal = parseFloat(p.stock_nuvemshop || 0);
-                let stockClass = 'in-stock';
-                if (stockVal <= 0) stockClass = 'out-of-stock';
-                else if (stockVal <= 3) stockClass = 'low-stock';
+        if (!data.success) {
+            tableBody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--danger); padding: 30px;">Erro ao consultar eGestor: ${escapeHtml(data.error || 'Falha')}</td></tr>`;
+            if (summaryText) summaryText.textContent = 'Erro ao carregar catálogo';
+            return;
+        }
 
-                let statusBadge = '<span class="status-badge warning"><span class="status-dot"></span> Pendente</span>';
-                if (p.status === 'synced') {
-                    statusBadge = '<span class="status-badge online"><span class="status-dot"></span> Sincronizado</span>';
-                } else if (p.status === 'error') {
-                    statusBadge = '<span class="status-badge offline"><span class="status-dot"></span> Erro</span>';
-                }
+        const items = data.items || [];
+        const totalEGestor = data.total_egestor || 0;
+        const lastPage = data.last_page || 1;
 
-                return `
-                    <tr>
-                        <td><strong>${p.sku || '-'}</strong></td>
-                        <td>${p.barcode || '-'}</td>
-                        <td>${escapeHtml(p.name)}</td>
-                        <td><span class="stock-tag ${stockClass}">${stockVal} un</span></td>
-                        <td>${p.price ? 'R$ ' + parseFloat(p.price).toFixed(2) : '-'}</td>
-                        <td>${statusBadge}</td>
-                        <td style="text-align: right; white-space: nowrap;">
-                            <button class="btn btn-secondary btn-sm" onclick="syncSingleProduct('${p.egestor_id || p.sku}')" title="Sincronizar estoque do eGestor para a Nuvemshop">
-                                🔄 Sincronizar
-                            </button>
-                            <button class="btn btn-danger btn-sm" style="margin-left: 6px;" onclick="removeProductFromNuvem('${p.nuvemshop_product_id}', '${escapeHtml(p.name)}')" title="Retirar produto da Nuvemshop (o eGestor não é alterado)">
-                                🗑️ Retirar
-                            </button>
-                        </td>
-                    </tr>
+        // Atualiza contadores
+        const topbarEGestor = document.getElementById('topbar-total-egestor');
+        if (topbarEGestor) topbarEGestor.textContent = totalEGestor.toLocaleString();
+
+        if (summaryText) {
+            let filterDesc = [];
+            if (status === 'missing') filterDesc.push('apenas não enviados');
+            else if (status === 'in_nuvem') filterDesc.push('apenas na Nuvemshop');
+            if (stock === 'has_stock') filterDesc.push('com estoque > 0');
+            else if (stock === 'zero_stock') filterDesc.push('estoque zerado');
+            else if (stock === 'low_stock') filterDesc.push('estoque baixo (1 a 3)');
+
+            const filterStr = filterDesc.length ? ` &bull; <span style="color: #2563eb; font-weight: 600;">(${filterDesc.join(', ')})</span>` : '';
+            summaryText.innerHTML = `Total no eGestor: <strong>${totalEGestor.toLocaleString()}</strong> itens &bull; Exibindo página <strong>${page}</strong> de <strong>${lastPage}</strong>${filterStr}`;
+        }
+
+        if (pagInfo) {
+            pagInfo.textContent = `Página ${page} de ${lastPage} (${totalEGestor.toLocaleString()} produtos cadastrados no eGestor)`;
+        }
+
+        const renderPaginationBtns = () => {
+            let btns = '';
+            if (page > 1) {
+                btns += `<button class="btn btn-secondary btn-sm" onclick="loadProductsList(${page - 1})">&laquo; Anterior</button>`;
+            }
+            if (page < lastPage) {
+                btns += `<button class="btn btn-secondary btn-sm" onclick="loadProductsList(${page + 1})">Próxima &raquo;</button>`;
+            }
+            return btns;
+        };
+
+        if (pagTop) pagTop.innerHTML = renderPaginationBtns();
+        if (pagBottom) pagBottom.innerHTML = renderPaginationBtns();
+
+        if (items.length === 0) {
+            tableBody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-dim); padding: 35px;">Nenhum produto encontrado nesta página com os filtros selecionados.</td></tr>';
+            return;
+        }
+
+        tableBody.innerHTML = items.map(p => {
+            const stockVal = parseFloat(p.estoque || 0);
+            let stockBadge = '<span class="stock-tag in-stock">' + stockVal + ' un</span>';
+            if (stockVal <= 0) stockBadge = '<span class="stock-tag out-of-stock">0 un</span>';
+            else if (stockVal <= 3) stockBadge = '<span class="stock-tag low-stock">' + stockVal + ' un</span>';
+
+            let nuvemStockVal = p.stock_nuvemshop !== null && p.stock_nuvemshop !== undefined ? parseFloat(p.stock_nuvemshop) : null;
+            let nuvemStockBadge = '<span style="color: #94a3b8;">-</span>';
+            if (p.in_nuvemshop && nuvemStockVal !== null) {
+                let nClass = 'in-stock';
+                if (nuvemStockVal <= 0) nClass = 'out-of-stock';
+                else if (nuvemStockVal <= 3) nClass = 'low-stock';
+                nuvemStockBadge = `<span class="stock-tag ${nClass}">${nuvemStockVal} un</span>`;
+            }
+
+            let statusHtml = '';
+            let actionHtml = '';
+
+            if (p.in_nuvemshop) {
+                statusHtml = `<span class="status-badge online"><span class="status-dot"></span> Na Nuvemshop (#${p.nuvemshop_product_id})</span>`;
+                actionHtml = `
+                    <div style="display: flex; gap: 6px; justify-content: flex-end;">
+                        <button class="btn btn-secondary btn-sm" onclick="syncSingleProduct('${p.codigo}')" title="Sincronizar estoque do eGestor para a Nuvemshop">
+                            🔄 Sincronizar
+                        </button>
+                        <button class="btn btn-danger btn-sm" onclick="removeProductFromNuvem('${p.nuvemshop_product_id}', '${escapeHtml(p.nome)}')" title="Retirar da Nuvemshop (o eGestor continua 100% intacto)">
+                            🗑️ Retirar
+                        </button>
+                    </div>
                 `;
-            }).join('');
-        } else {
-            tableBody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--text-dim); padding: 30px;">Nenhum produto encontrado com os filtros selecionados.</td></tr>';
-        }
-    } catch (err) {
-        tableBody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: var(--danger);">Erro ao carregar produtos.</td></tr>';
-    }
-}
-
-async function loadLogs() {
-    const terminal = document.getElementById('logs-terminal');
-    if (!terminal) return;
-
-    try {
-        const res = await fetch('api.php?action=logs');
-        const data = await res.json();
-
-        if (data.success && data.logs.length > 0) {
-            terminal.innerHTML = data.logs.map(log => {
-                let badgeClass = 'info';
-                if (log.status === 'success') badgeClass = 'success';
-                if (log.status === 'error') badgeClass = 'error';
-                if (log.status === 'warning') badgeClass = 'warning';
-
-                return `<div class="log-entry ${badgeClass}">
-                    [${log.created_at}] [${log.source.toUpperCase()}] [${log.action}] ID: ${log.entity_id} - ${escapeHtml(log.details)}
-                </div>`;
-            }).join('');
-        } else {
-            terminal.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 20px;">Nenhum log registrado ainda.</div>';
-        }
-    } catch (err) {
-        terminal.innerHTML = '<div style="color: var(--danger);">Falha ao carregar registros de log.</div>';
-    }
-}
-
-async function registerNuvemshopWebhooks() {
-    const url = document.getElementById('nuvem-url-text').textContent.trim();
-    if (url.includes('localhost') || url.includes('127.0.0.1')) {
-        alert('Atenção: A Nuvemshop exige uma URL pública acessível pela internet com HTTPS (seu domínio na Hostinger ou um túnel ngrok).\n\nQuando subir para a Hostinger, clique neste botão para registrar os eventos de vendas automaticamente.');
-        return;
-    }
-
-    showToast('Registrando webhooks de vendas na Nuvemshop...', 'info');
-    try {
-        const formData = new FormData();
-        formData.append('url', url);
-
-        const res = await fetch('api.php?action=register_nuvemshop_webhooks', {
-            method: 'POST',
-            body: formData
-        });
-        const data = await res.json();
-
-        if (data.success) {
-            showToast(data.message, 'success');
-            loadLogs();
-        } else {
-            showToast('Erro ao registrar: ' + (data.error || 'Falha'), 'error');
-        }
-    } catch (err) {
-        showToast('Erro de comunicação ao registrar webhook na Nuvemshop', 'error');
-    }
-}
-
-let isExportRunning = false;
-
-function importEGestorToNuvemshop() {
-    document.getElementById('export-setup-view').style.display = 'block';
-    document.getElementById('export-progress-view').style.display = 'none';
-    document.getElementById('export-egestor-modal').classList.add('active');
-}
-
-function closeExportModal() {
-    if (isExportRunning) {
-        if (!confirm('A importação está em andamento. Deseja realmente fechar e interromper?')) return;
-        isExportRunning = false;
-    }
-    document.getElementById('export-egestor-modal').classList.remove('active');
-}
-
-function stopBatchExport() {
-    isExportRunning = false;
-    document.getElementById('export-progress-status').textContent = 'Interrompendo... aguarde a página atual finalizar.';
-}
-
-async function startBatchExport() {
-    const onlyStock = document.getElementById('check-only-stock').checked;
-    isExportRunning = true;
-
-    document.getElementById('export-setup-view').style.display = 'none';
-    document.getElementById('export-progress-view').style.display = 'block';
-
-    let currentPage = 1;
-    let lastPage = 1;
-    let totalProcessed = 0;
-    let totalCreated = 0;
-    let totalUpdated = 0;
-    let totalSkipped = 0;
-
-    const term = document.getElementById('export-live-terminal');
-    term.innerHTML = '<div style="color: #93c5fd;">Iniciando conexão com a API do eGestor e Nuvemshop...</div>';
-
-    while (isExportRunning && currentPage <= lastPage) {
-        document.getElementById('export-progress-status').textContent = `Processando página ${currentPage} de ${lastPage}...`;
-        const pct = Math.round(((currentPage - 1) / Math.max(1, lastPage)) * 100);
-        document.getElementById('export-progress-percent').textContent = `${pct}%`;
-        document.getElementById('export-progress-bar').style.width = `${pct}%`;
-
-        try {
-            const formData = new FormData();
-            formData.append('page', currentPage);
-            if (onlyStock) formData.append('only_stock', '1');
-
-            const res = await fetch('api.php?action=export_egestor_page', {
-                method: 'POST',
-                body: formData
-            });
-            const data = await res.json();
-
-            if (!data.success) {
-                term.innerHTML += `<div style="color: #f87171;">[Erro Pág ${currentPage}] ${data.error || 'Falha ao buscar página'}</div>`;
-                term.scrollTop = term.scrollHeight;
-                break;
+            } else {
+                statusHtml = `<span class="status-badge neutral"><span class="status-dot"></span> Não Cadastrado</span>`;
+                actionHtml = `
+                    <div style="display: flex; gap: 6px; justify-content: flex-end;">
+                        <button class="btn btn-primary btn-sm" onclick="sendProductToNuvem('${p.codigo}', true)" title="Cadastrar e enviar este produto para a Nuvemshop">
+                            ⚡ Enviar para Nuvem
+                        </button>
+                    </div>
+                `;
             }
 
-            lastPage = data.last_page || 1;
-            totalProcessed += data.processed || 0;
-            totalCreated += data.created || 0;
-            totalUpdated += data.updated || 0;
-            totalSkipped += data.skipped || 0;
+            return `
+                <tr>
+                    <td><strong>${p.codigo}</strong></td>
+                    <td><span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">${p.sku || '-'}</span></td>
+                    <td><span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);">${p.barcode || '-'}</span></td>
+                    <td><strong>${escapeHtml(p.nome)}</strong></td>
+                    <td>${stockBadge}</td>
+                    <td>${nuvemStockBadge}</td>
+                    <td>${p.preco ? 'R$ ' + parseFloat(p.preco).toFixed(2) : '-'}</td>
+                    <td>${statusHtml}</td>
+                    <td style="text-align: right;">${actionHtml}</td>
+                </tr>
+            `;
+        }).join('');
 
-            document.getElementById('cnt-processed').textContent = totalProcessed;
-            document.getElementById('cnt-created').textContent = totalCreated;
-            document.getElementById('cnt-updated').textContent = totalUpdated;
-            document.getElementById('cnt-skipped').textContent = totalSkipped;
-
-            if (data.logs && data.logs.length > 0) {
-                const logsHtml = data.logs.map(l => {
-                    let color = '#d1d5db';
-                    if (l.startsWith('Criado')) color = '#86efac';
-                    if (l.startsWith('Atualizado')) color = '#93c5fd';
-                    if (l.startsWith('Erro')) color = '#f87171';
-                    if (l.startsWith('Ignorado')) color = '#6b7280';
-                    return `<div style="color: ${color};">${escapeHtml(l)}</div>`;
-                }).join('');
-                term.innerHTML += logsHtml;
-                term.scrollTop = term.scrollHeight;
-            }
-
-            currentPage++;
-        } catch (err) {
-            term.innerHTML += `<div style="color: #f87171;">Erro de rede na página ${currentPage}: ${err.message}</div>`;
-            term.scrollTop = term.scrollHeight;
-            break;
-        }
-    }
-
-    isExportRunning = false;
-    document.getElementById('export-progress-percent').textContent = '100%';
-    document.getElementById('export-progress-bar').style.width = '100%';
-    document.getElementById('export-progress-status').textContent = 'Importação Finalizada!';
-    document.getElementById('btn-cancel-export').textContent = 'Fechar';
-    document.getElementById('btn-cancel-export').onclick = closeExportModal;
-
-    showToast(`Concluído! ${totalCreated} produtos novos criados, ${totalUpdated} atualizados.`, 'success');
-    loadProducts();
-    loadStatus(true);
-    loadLogs();
-}
-
-async function importFromNuvemshop() {
-    if (!confirm('Deseja importar todo o catálogo atual da Nuvemshop para a base de mapeamento?')) return;
-
-    showToast('Importando catálogo da Nuvemshop... aguarde.', 'info');
-    try {
-        const res = await fetch('api.php?action=import_nuvemshop', { method: 'POST' });
-        const data = await res.json();
-
-        if (data.success) {
-            showToast(`Sucesso! ${data.total} variantes mapeadas da Nuvemshop.`, 'success');
-            loadProducts();
-            loadStatus(true);
-        } else {
-            showToast('Erro ao importar: ' + (data.error || 'Desconhecido'), 'error');
-        }
     } catch (err) {
-        showToast('Erro de conexão ao importar catálogo.', 'error');
+        tableBody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--danger); padding: 30px;">Erro de conexão ao consultar produtos do eGestor.</td></tr>';
     }
 }
 
+function resetProductsListFilters() {
+    const s = document.getElementById('search-products-list');
+    if (s) s.value = '';
+    const st = document.getElementById('filter-status-nuvem');
+    if (st) st.value = 'all';
+    const sk = document.getElementById('filter-stock-level');
+    if (sk) sk.value = 'all';
+    loadProductsList(1);
+}
+
+// Sincroniza estoque de um produto avulso
 async function syncSingleProduct(codigo) {
     if (!codigo) {
         showToast('Código de produto inválido', 'error');
         return;
     }
 
-    showToast(`Sincronizando produto ${codigo}...`, 'info');
+    showToast(`Sincronizando estoque do produto ${codigo}...`, 'info');
     try {
         const res = await fetch(`api.php?action=sync_product&codigo=${encodeURIComponent(codigo)}`, { method: 'POST' });
         const data = await res.json();
 
         if (data.success) {
             showToast(data.message || 'Produto sincronizado com sucesso!', 'success');
-            loadProducts();
+            loadProductsList(window.currentProductsPage || 1);
             loadStatus(true);
-            const visorTab = document.getElementById('tab-visor');
-            if (visorTab && visorTab.classList.contains('active')) {
-                loadVisorProducts(window.currentVisorPage || 1);
-            }
         } else {
             showToast('Falha: ' + (data.error || 'Erro desconhecido'), 'error');
         }
     } catch (err) {
         showToast('Erro na requisição de sincronização', 'error');
+    }
+}
+
+// Envia produto individual do eGestor para a Nuvemshop
+async function sendProductToNuvem(codigo, force = true) {
+    if (!codigo) {
+        showToast('Código inválido', 'error');
+        return;
+    }
+
+    showToast(`Buscando e enviando produto ${codigo} para a Nuvemshop...`, 'info');
+
+    try {
+        const formData = new FormData();
+        formData.append('codigo', codigo);
+        formData.append('force', force ? '1' : '0');
+
+        const res = await fetch('api.php?action=sync_product', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            showToast(data.message || 'Produto enviado para a Nuvemshop com sucesso!', 'success');
+            loadProductsList(window.currentProductsPage || 1);
+            loadStatus(true);
+        } else {
+            showToast('Falha no envio: ' + (data.error || 'Erro desconhecido'), 'error');
+        }
+    } catch (err) {
+        showToast('Erro de comunicação ao enviar produto', 'error');
     }
 }
 
@@ -449,12 +449,8 @@ async function removeProductFromNuvem(productId, productName) {
 
         if (data.success) {
             showToast(data.message || 'Produto retirado da Nuvemshop com sucesso!', 'success');
-            loadProducts();
+            loadProductsList(window.currentProductsPage || 1);
             loadStatus(true);
-            const visorTab = document.getElementById('tab-visor');
-            if (visorTab && visorTab.classList.contains('active')) {
-                loadVisorProducts(window.currentVisorPage || 1);
-            }
         } else {
             showToast('Erro ao remover: ' + (data.error || 'Falha'), 'error');
         }
@@ -499,322 +495,9 @@ async function submitManualSend(e) {
     closeManualSendModal();
 }
 
-// Envia produto individual do eGestor para a Nuvemshop
-async function sendProductToNuvem(codigo, force = true) {
-    if (!codigo) {
-        showToast('Código inválido', 'error');
-        return;
-    }
-
-    showToast(`Buscando e enviando produto ${codigo} para a Nuvemshop...`, 'info');
-
-    try {
-        const formData = new FormData();
-        formData.append('codigo', codigo);
-        formData.append('force', force ? '1' : '0');
-
-        const res = await fetch('api.php?action=sync_product', {
-            method: 'POST',
-            body: formData
-        });
-        const data = await res.json();
-
-        if (data.success) {
-            showToast(data.message || 'Produto enviado para a Nuvemshop com sucesso!', 'success');
-            loadProducts();
-            loadStatus(true);
-            const visorTab = document.getElementById('tab-visor');
-            if (visorTab && visorTab.classList.contains('active')) {
-                loadVisorProducts(window.currentVisorPage || 1);
-            }
-        } else {
-            showToast('Falha no envio: ' + (data.error || 'Erro desconhecido'), 'error');
-        }
-    } catch (err) {
-        showToast('Erro de comunicação ao enviar produto', 'error');
-    }
-}
-
-function resetVisorFilters() {
-    const s = document.getElementById('search-visor');
-    if (s) s.value = '';
-    const st = document.getElementById('filter-visor-status');
-    if (st) st.value = 'missing';
-    const sk = document.getElementById('filter-visor-stock');
-    if (sk) sk.value = 'all';
-    loadVisorProducts(1);
-}
-
-function openSyncModal() {
-    importEGestorToNuvemshop();
-}
-
-// Vizor: Carrega lista comparativa eGestor vs Nuvemshop
-window.currentVisorPage = 1;
-async function loadVisorProducts(page = 1) {
-    window.currentVisorPage = page;
-    const tableBody = document.getElementById('visor-table-body');
-    const summaryText = document.getElementById('visor-summary-text');
-    const pagInfo = document.getElementById('visor-pagination-info');
-    const pagTop = document.getElementById('visor-pagination-top');
-    const pagBottom = document.getElementById('visor-pagination-bottom');
-
-    if (!tableBody) return;
-
-    tableBody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 25px;">Carregando produtos do eGestor...</td></tr>';
-    if (summaryText) summaryText.textContent = 'Consultando API do eGestor...';
-
-    const filterInput = document.getElementById('search-visor');
-    const filter = filterInput ? filterInput.value.trim() : '';
-    const statusEl = document.getElementById('filter-visor-status');
-    const status = statusEl ? statusEl.value : 'missing';
-    const stockEl = document.getElementById('filter-visor-stock');
-    const stock = stockEl ? stockEl.value : 'all';
-
-    try {
-        const params = new URLSearchParams({
-            action: 'egestor_vs_nuvem',
-            page: page,
-            filter: filter,
-            status: status,
-            stock: stock
-        });
-
-        const res = await fetch(`api.php?${params.toString()}`);
-        const data = await res.json();
-
-        if (!data.success) {
-            tableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--danger); padding: 25px;">Erro ao consultar eGestor: ${escapeHtml(data.error || 'Falha')}</td></tr>`;
-            if (summaryText) summaryText.textContent = 'Erro ao carregar catálogo';
-            return;
-        }
-
-        const items = data.items || [];
-        const totalEGestor = data.total_egestor || 0;
-        const lastPage = data.last_page || 1;
-
-        if (summaryText) {
-            let filterDesc = [];
-            if (status === 'missing') filterDesc.push('apenas NÃO enviados para Nuvem');
-            else if (status === 'in_nuvem') filterDesc.push('apenas JÁ enviados para Nuvem');
-            if (stock === 'has_stock') filterDesc.push('com estoque > 0');
-            else if (stock === 'zero_stock') filterDesc.push('sem estoque / zerados');
-            else if (stock === 'low_stock') filterDesc.push('estoque baixo');
-
-            const filterStr = filterDesc.length ? ` &bull; <span style="color:#fde047;">(${filterDesc.join(', ')})</span>` : '';
-            summaryText.innerHTML = `Total no eGestor: <strong>${totalEGestor.toLocaleString()}</strong> | Exibindo página <strong>${page}</strong> de <strong>${lastPage}</strong>${filterStr}`;
-        }
-
-        if (pagInfo) {
-            pagInfo.textContent = `Página ${page} de ${lastPage} (${totalEGestor.toLocaleString()} itens no eGestor)`;
-        }
-
-        const renderPaginationBtns = () => {
-            let btns = '';
-            if (page > 1) {
-                btns += `<button class="btn btn-secondary btn-sm" onclick="loadVisorProducts(${page - 1})">&laquo; Anterior</button>`;
-            }
-            if (page < lastPage) {
-                btns += `<button class="btn btn-secondary btn-sm" onclick="loadVisorProducts(${page + 1})">Próxima &raquo;</button>`;
-            }
-            return btns;
-        };
-
-        if (pagTop) pagTop.innerHTML = renderPaginationBtns();
-        if (pagBottom) pagBottom.innerHTML = renderPaginationBtns();
-
-        if (items.length === 0) {
-            tableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 30px;">Nenhum produto encontrado nesta página com os filtros selecionados.</td></tr>`;
-            return;
-        }
-
-        tableBody.innerHTML = items.map(p => {
-            const stockVal = parseFloat(p.estoque || 0);
-            let stockBadge = '<span class="stock-tag in-stock">' + stockVal + ' un</span>';
-            if (stockVal <= 0) stockBadge = '<span class="stock-tag out-of-stock">0 un</span>';
-            else if (stockVal <= 3) stockBadge = '<span class="stock-tag low-stock">' + stockVal + ' un</span>';
-
-            let statusHtml = '';
-            let actionHtml = '';
-
-            if (p.in_nuvemshop) {
-                statusHtml = `<span class="status-badge online"><span class="status-dot"></span> Na Nuvemshop (#${p.nuvemshop_product_id})</span>`;
-                actionHtml = `
-                    <div style="display: flex; gap: 6px; justify-content: flex-end;">
-                        <button class="btn btn-secondary btn-sm" onclick="syncSingleProduct('${p.codigo}')" title="Sincronizar estoque do eGestor para a Nuvemshop">
-                            🔄
-                        </button>
-                        <button class="btn btn-danger btn-sm" onclick="removeProductFromNuvem('${p.nuvemshop_product_id}', '${escapeHtml(p.nome)}')" title="Retirar da Nuvemshop (mantém 100% no eGestor)">
-                            🗑️ Retirar da Nuvem
-                        </button>
-                    </div>
-                `;
-            } else {
-                statusHtml = `<span class="status-badge warning" style="color: #fde047;"><span class="status-dot"></span> Não Enviado</span>`;
-                actionHtml = `
-                    <div style="display: flex; gap: 6px; justify-content: flex-end;">
-                        <button class="btn btn-success btn-sm" onclick="sendProductToNuvem('${p.codigo}', true)" title="Enviar este produto manualmente para a Nuvemshop">
-                            📤 Enviar para Nuvem
-                        </button>
-                    </div>
-                `;
-            }
-
-            return `
-                <tr>
-                    <td><strong>${p.codigo}</strong></td>
-                    <td>${p.sku || '-'}</td>
-                    <td>${p.barcode || '-'}</td>
-                    <td>${escapeHtml(p.nome)}</td>
-                    <td>${stockBadge}</td>
-                    <td>${p.preco ? 'R$ ' + parseFloat(p.preco).toFixed(2) : '-'}</td>
-                    <td>${statusHtml}</td>
-                    <td style="text-align: right;">${actionHtml}</td>
-                </tr>
-            `;
-        }).join('');
-
-    } catch (err) {
-        tableBody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--danger); padding: 25px;">Erro de conexão ao consultar produtos do eGestor.</td></tr>';
-    }
-}
-
-// Modal Settings
-function openSettingsModal() {
-    document.getElementById('settings-modal').classList.add('active');
-}
-
-function closeSettingsModal() {
-    document.getElementById('settings-modal').classList.remove('active');
-}
-
-async function saveSettings(e) {
-    e.preventDefault();
-    const token = document.getElementById('input-personal-token').value.trim();
-    const onlyStockEl = document.getElementById('input-sync-only-stock');
-    const onlyStock = onlyStockEl ? onlyStockEl.checked : true;
-
-    try {
-        const formData = new FormData();
-        formData.append('egestor_personal_token', token);
-        formData.append('sync_only_with_stock', onlyStock ? '1' : '0');
-
-        const res = await fetch('api.php?action=save_settings', {
-            method: 'POST',
-            body: formData
-        });
-        const data = await res.json();
-
-        if (data.success) {
-            showToast('Configurações salvas com sucesso!', 'success');
-            closeSettingsModal();
-            loadStatus();
-        } else {
-            showToast('Erro ao salvar: ' + (data.error || 'Desconhecido'), 'error');
-        }
-    } catch (err) {
-        showToast('Erro de conexão ao salvar configurações', 'error');
-    }
-}
-
-// Modal Criar Produto Nuvemshop
-function openCreateProductModal() {
-    document.getElementById('create-product-modal').classList.add('active');
-}
-
-function closeCreateProductModal() {
-    document.getElementById('create-product-modal').classList.remove('active');
-}
-
-async function submitCreateProduct(e) {
-    e.preventDefault();
-    const form = e.target;
-    const formData = new FormData(form);
-
-    showToast('Cadastrando produto na Nuvemshop...', 'info');
-
-    try {
-        const res = await fetch('api.php?action=create_product_nuvem', {
-            method: 'POST',
-            body: formData
-        });
-        const data = await res.json();
-
-        if (data.success) {
-            showToast('Produto cadastrado na Nuvemshop com sucesso!', 'success');
-            closeCreateProductModal();
-            form.reset();
-            loadProducts();
-            loadStatus(true);
-        } else {
-            showToast('Erro ao criar: ' + (data.error || 'Desconhecido'), 'error');
-        }
-    } catch (err) {
-        showToast('Erro de comunicação com o servidor', 'error');
-    }
-}
-
-// Modal Teste de Webhook
-function openTestWebhookModal() {
-    document.getElementById('test-webhook-modal').classList.add('active');
-}
-
-function closeTestWebhookModal() {
-    document.getElementById('test-webhook-modal').classList.remove('active');
-}
-
-async function submitTestWebhook(e) {
-    e.preventDefault();
-    const codigo = document.getElementById('test-webhook-codigo').value.trim();
-
-    showToast(`Simulando webhook do eGestor para produto ${codigo}...`, 'info');
-    try {
-        const formData = new FormData();
-        formData.append('codigo', codigo);
-
-        const res = await fetch('api.php?action=test_webhook', {
-            method: 'POST',
-            body: formData
-        });
-        const data = await res.json();
-
-        if (data.success) {
-            showToast('Webhook simulado executado com sucesso: ' + (data.message || 'OK'), 'success');
-            closeTestWebhookModal();
-            loadProducts();
-            loadLogs();
-        } else {
-            showToast('Falha no teste: ' + (data.error || 'Erro desconhecido'), 'error');
-        }
-    } catch (err) {
-        showToast('Erro ao disparar webhook de teste', 'error');
-    }
-}
-
-function escapeHtml(text) {
-    if (text === null || text === undefined) return '';
-    return String(text)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;");
-}
-
 // ========================================================
 // CADASTRO DE PRODUTO NOS MOLDES DA NUVEMSHOP
 // ========================================================
-
-function switchToNewProductTab() {
-    const tabBtn = document.querySelector('.tab-btn[data-tab="tab-novo-produto"]');
-    if (tabBtn) tabBtn.click();
-    generateVariantsTable();
-    setTimeout(() => {
-        const nameInput = document.getElementById('prod-name');
-        if (nameInput) nameInput.focus();
-    }, 100);
-}
-
 function initNewProductForm() {
     const chk = document.getElementById('chk-has-variants');
     if (chk) toggleHasVariants(chk.checked);
@@ -856,7 +539,6 @@ function onBasePriceChange() {
     });
 }
 
-// Armazena temporariamente valores digitados para não perder ao editar texto de opções
 window.variantCustomData = window.variantCustomData || {};
 
 function generateVariantsTable() {
@@ -924,7 +606,7 @@ function generateVariantsTable() {
     if (badge) badge.textContent = combinations.length;
 
     if (combinations.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-dim); padding: 20px;">Nenhuma opção definida. Preencha os valores acima (ex: Verde, Rosa, Preto).</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-dim); padding: 25px;">Nenhuma opção definida. Preencha os valores acima (ex: Verde, Rosa, Preto).</td></tr>`;
         return;
     }
 
@@ -938,8 +620,8 @@ function generateVariantsTable() {
 
         return `
             <tr class="variant-row" data-combo-key="${escapeHtml(c.key)}" data-values='${escapeHtml(JSON.stringify(c.values))}'>
-                <td style="font-weight: 500;">
-                    <span style="display: inline-block; background: rgba(255,255,255,0.08); padding: 3px 8px; border-radius: 4px;">
+                <td style="font-weight: 600;">
+                    <span style="display: inline-block; background: #f1f5f9; padding: 4px 10px; border-radius: 6px; color: var(--text-main);">
                         ${escapeHtml(c.label)}
                     </span>
                 </td>
@@ -950,7 +632,7 @@ function generateVariantsTable() {
                     <input type="number" step="1" min="0" class="form-control variant-val-stock" value="${stockVal}" placeholder="0" required>
                 </td>
                 <td>
-                    <input type="text" class="form-control variant-val-sku" value="${escapeHtml(skuVal)}" placeholder="Auto">
+                    <input type="text" class="form-control variant-val-sku" value="${escapeHtml(skuVal)}" placeholder="Auto (ID)">
                 </td>
                 <td>
                     <input type="text" class="form-control variant-val-barcode" value="${escapeHtml(barcodeVal)}" placeholder="Opcional">
@@ -980,7 +662,7 @@ async function submitFullProduct(e) {
     const costPrice = parseFloat(document.getElementById('prod-cost-price')?.value || 0);
     const description = document.getElementById('prod-description')?.value.trim() || '';
 
-    // Imagens (uma por linha)
+    // Imagens
     const imagesRaw = document.getElementById('prod-images')?.value || '';
     const images = imagesRaw.split('\n').map(s => s.trim()).filter(s => s.startsWith('http'));
 
@@ -1036,7 +718,6 @@ async function submitFullProduct(e) {
         payload.attributes = attributes;
         payload.variants = variants;
     } else {
-        // Produto Simples
         payload.stock = parseFloat(document.getElementById('prod-simple-stock')?.value || 0);
         payload.sku = document.getElementById('prod-simple-sku')?.value.trim() || '';
         payload.barcode = document.getElementById('prod-simple-barcode')?.value.trim() || '';
@@ -1053,10 +734,10 @@ async function submitFullProduct(e) {
     if (statusBox && statusText) {
         statusBox.style.display = 'block';
         statusText.innerHTML = `
-            <strong>Processando Cadastro:</strong><br>
-            1. Salvando ${hasVariants ? payload.variants.length + ' variações individuais' : 'produto'} no eGestor...<br>
-            2. Criando anúncio unificado na Nuvemshop...<br>
-            3. Gravando sincronização de estoque...
+            <strong>Processando Cadastro Atômico:</strong><br>
+            1. Criando ${hasVariants ? payload.variants.length + ' variações individuais' : 'produto'} no eGestor...<br>
+            2. Criando anúncio unificado com grade na Nuvemshop...<br>
+            3. Registrando controle de estoque e SKUs...
         `;
     }
 
@@ -1081,18 +762,16 @@ async function submitFullProduct(e) {
             generateVariantsTable();
 
             // Atualiza status e tabelas
-            loadProducts();
+            loadProductsList(1);
             loadStatus(true);
             loadLogs();
 
-            // Notifica e sugere ir para a aba de produtos
             setTimeout(() => {
-                const goTab = confirm('Produto cadastrado com sucesso no eGestor e na Nuvemshop! Deseja visualizar na lista de produtos?');
+                const goTab = confirm('Produto cadastrado com sucesso! Deseja visualizar na Lista de Produtos?');
                 if (goTab) {
-                    const prodTabBtn = document.querySelector('.tab-btn[data-tab="tab-products"]');
-                    if (prodTabBtn) prodTabBtn.click();
+                    switchTab('tab-lista-produtos');
                 }
-            }, 500);
+            }, 400);
 
         } else {
             showToast('Erro ao cadastrar: ' + (data.error || 'Falha no processo'), 'error');
@@ -1108,5 +787,95 @@ async function submitFullProduct(e) {
     } finally {
         btn.disabled = false;
         btn.innerHTML = originalBtnHtml;
+    }
+}
+
+// ========================================================
+// LOGS DO SISTEMA
+// ========================================================
+async function loadLogs() {
+    const terminal = document.getElementById('logs-terminal');
+    if (!terminal) return;
+
+    try {
+        const res = await fetch('api.php?action=logs');
+        const data = await res.json();
+
+        if (data.success && data.logs.length > 0) {
+            terminal.innerHTML = data.logs.map(log => {
+                let badgeClass = 'info';
+                if (log.status === 'success') badgeClass = 'success';
+                if (log.status === 'error') badgeClass = 'error';
+                if (log.status === 'warning') badgeClass = 'warning';
+
+                return `<div class="log-entry ${badgeClass}">
+                    [${log.created_at}] [${log.source.toUpperCase()}] [${log.action}] ID: ${log.entity_id} - ${escapeHtml(log.details)}
+                </div>`;
+            }).join('');
+        } else {
+            terminal.innerHTML = '<div style="color: var(--text-dim); text-align: center; padding: 20px;">Nenhum log registrado ainda.</div>';
+        }
+    } catch (err) {
+        terminal.innerHTML = '<div style="color: var(--danger);">Falha ao carregar registros de log.</div>';
+    }
+}
+
+// ========================================================
+// CONFIGURAÇÕES E WEBHOOKS
+// ========================================================
+async function saveSettings(e) {
+    e.preventDefault();
+    const token = document.getElementById('input-personal-token').value.trim();
+    const onlyStockEl = document.getElementById('input-sync-only-stock');
+    const onlyStock = onlyStockEl ? onlyStockEl.checked : true;
+
+    try {
+        const formData = new FormData();
+        formData.append('egestor_personal_token', token);
+        formData.append('sync_only_with_stock', onlyStock ? '1' : '0');
+
+        const res = await fetch('api.php?action=save_settings', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            showToast('Configurações salvas com sucesso!', 'success');
+            loadStatus();
+        } else {
+            showToast('Erro ao salvar: ' + (data.error || 'Desconhecido'), 'error');
+        }
+    } catch (err) {
+        showToast('Erro de conexão ao salvar configurações', 'error');
+    }
+}
+
+async function registerNuvemshopWebhooks() {
+    const url = document.getElementById('nuvem-url-text').textContent.trim();
+    if (url.includes('localhost') || url.includes('127.0.0.1')) {
+        alert('Atenção: A Nuvemshop exige uma URL pública acessível pela internet com HTTPS.\n\nQuando subir para a Hostinger, clique neste botão para registrar os eventos de vendas automaticamente.');
+        return;
+    }
+
+    showToast('Registrando webhooks de vendas na Nuvemshop...', 'info');
+    try {
+        const formData = new FormData();
+        formData.append('url', url);
+
+        const res = await fetch('api.php?action=register_nuvemshop_webhooks', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            showToast(data.message, 'success');
+            loadLogs();
+        } else {
+            showToast('Erro ao registrar: ' + (data.error || 'Falha'), 'error');
+        }
+    } catch (err) {
+        showToast('Erro de comunicação ao registrar webhook na Nuvemshop', 'error');
     }
 }
