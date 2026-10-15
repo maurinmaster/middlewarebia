@@ -283,6 +283,18 @@ try {
             }
             break;
 
+        case 'create_full_product':
+            // Cadastro completo de produto: cria na Nuvemshop (com grade) e separado no eGestor
+            $rawInput = file_get_contents('php://input');
+            $data = json_decode($rawInput, true);
+            if (empty($data)) {
+                $data = $_POST;
+            }
+
+            $res = $syncService->createFullProduct($data);
+            echo json_encode($res);
+            break;
+
         case 'create_unified_product':
             // Cria um produto com grade de variações unificando produtos avulsos do eGestor
             $rawInput = file_get_contents('php://input');

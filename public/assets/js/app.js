@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadStatus();
     loadProducts();
     loadLogs();
+    initNewProductForm();
 
     // Auto-refresh status e logs a cada 30 segundos
     setInterval(() => {
@@ -620,13 +621,9 @@ async function loadVisorProducts(page = 1) {
         if (pagBottom) pagBottom.innerHTML = renderPaginationBtns();
 
         if (items.length === 0) {
-            tableBody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--text-dim); padding: 30px;">Nenhum produto encontrado nesta página com os filtros selecionados.</td></tr>`;
+            tableBody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 30px;">Nenhum produto encontrado nesta página com os filtros selecionados.</td></tr>`;
             return;
         }
-
-        // Cache dos itens da página atual para fácil acesso pelos checkboxes
-        window.currentVisorItems = items;
-        window.selectedVisorProducts = window.selectedVisorProducts || new Map();
 
         tableBody.innerHTML = items.map(p => {
             const stockVal = parseFloat(p.estoque || 0);
@@ -660,13 +657,8 @@ async function loadVisorProducts(page = 1) {
                 `;
             }
 
-            const isChecked = window.selectedVisorProducts.has(String(p.codigo)) ? 'checked' : '';
-
             return `
                 <tr>
-                    <td style="text-align: center;">
-                        <input type="checkbox" class="visor-checkbox" data-codigo="${p.codigo}" ${isChecked} onchange="onVisorCheckboxChange(this, '${p.codigo}')" style="cursor: pointer;">
-                    </td>
                     <td><strong>${p.codigo}</strong></td>
                     <td>${p.sku || '-'}</td>
                     <td>${p.barcode || '-'}</td>
@@ -679,11 +671,8 @@ async function loadVisorProducts(page = 1) {
             `;
         }).join('');
 
-        updateMasterCheckboxState();
-        updateUnifyButtonState();
-
     } catch (err) {
-        tableBody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--danger); padding: 25px;">Erro de conexão ao consultar produtos do eGestor.</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: var(--danger); padding: 25px;">Erro de conexão ao consultar produtos do eGestor.</td></tr>';
     }
 }
 
@@ -809,266 +798,253 @@ function escapeHtml(text) {
         .replace(/'/g, "&#039;");
 }
 
-// ==========================================
-// UNIFICADOR DE VARIAÇÕES EM GRADE (NUVEMSHOP)
-// ==========================================
+// ========================================================
+// CADASTRO DE PRODUTO NOS MOLDES DA NUVEMSHOP
+// ========================================================
 
-window.selectedVisorProducts = window.selectedVisorProducts || new Map();
-
-function onVisorCheckboxChange(checkbox, codigo) {
-    codigo = String(codigo);
-    if (checkbox.checked) {
-        const prod = (window.currentVisorItems || []).find(p => String(p.codigo) === codigo);
-        if (prod) {
-            window.selectedVisorProducts.set(codigo, prod);
-        }
-    } else {
-        window.selectedVisorProducts.delete(codigo);
-    }
-    updateMasterCheckboxState();
-    updateUnifyButtonState();
+function switchToNewProductTab() {
+    const tabBtn = document.querySelector('.tab-btn[data-tab="tab-novo-produto"]');
+    if (tabBtn) tabBtn.click();
+    setTimeout(() => {
+        const nameInput = document.getElementById('prod-name');
+        if (nameInput) nameInput.focus();
+    }, 100);
 }
 
-function toggleSelectAllVisor(masterCheckbox) {
-    const checkboxes = document.querySelectorAll('.visor-checkbox');
-    checkboxes.forEach(cb => {
-        cb.checked = masterCheckbox.checked;
-        const codigo = String(cb.getAttribute('data-codigo'));
-        if (masterCheckbox.checked) {
-            const prod = (window.currentVisorItems || []).find(p => String(p.codigo) === codigo);
-            if (prod) {
-                window.selectedVisorProducts.set(codigo, prod);
-            }
-        } else {
-            window.selectedVisorProducts.delete(codigo);
+function initNewProductForm() {
+    generateVariantsTable();
+}
+
+function toggleHasVariants(hasVariants) {
+    const simpleBlock = document.getElementById('simple-product-block');
+    const variantsBlock = document.getElementById('variants-product-block');
+    if (simpleBlock) simpleBlock.style.display = hasVariants ? 'none' : 'block';
+    if (variantsBlock) variantsBlock.style.display = hasVariants ? 'block' : 'none';
+}
+
+function toggleProp2(enabled) {
+    const prop2Box = document.getElementById('prop-2-box');
+    if (prop2Box) prop2Box.style.display = enabled ? 'block' : 'none';
+    generateVariantsTable();
+}
+
+function onBasePriceChange() {
+    const basePrice = document.getElementById('prod-price').value;
+    if (!basePrice) return;
+    const priceInputs = document.querySelectorAll('.variant-val-price');
+    priceInputs.forEach(input => {
+        if (!input.dataset.userEdited) {
+            input.value = parseFloat(basePrice).toFixed(2);
         }
     });
-    updateUnifyButtonState();
 }
 
-function updateMasterCheckboxState() {
-    const master = document.getElementById('visor-select-all');
-    const checkboxes = document.querySelectorAll('.visor-checkbox');
-    if (!master || checkboxes.length === 0) return;
+// Armazena temporariamente valores digitados para não perder ao editar texto de opções
+window.variantCustomData = window.variantCustomData || {};
 
-    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
-    const anyChecked = Array.from(checkboxes).some(cb => cb.checked);
-    master.checked = allChecked;
-    master.indeterminate = anyChecked && !allChecked;
-}
+function generateVariantsTable() {
+    const tbody = document.getElementById('variants-tbody');
+    const badge = document.getElementById('variants-count-badge');
+    if (!tbody) return;
 
-function updateUnifyButtonState() {
-    const btn = document.getElementById('btn-open-unify-modal');
-    const countSpan = document.getElementById('unify-selected-count');
-    const count = window.selectedVisorProducts.size;
-    if (countSpan) countSpan.textContent = count;
-    if (btn) {
-        btn.style.display = count >= 2 ? 'inline-flex' : 'none';
+    // Salva o que já foi digitado pelo usuário nas linhas existentes
+    document.querySelectorAll('.variant-row').forEach(row => {
+        const key = row.dataset.comboKey;
+        if (!key) return;
+        const priceInput = row.querySelector('.variant-val-price');
+        const stockInput = row.querySelector('.variant-val-stock');
+        const skuInput = row.querySelector('.variant-val-sku');
+        const barcodeInput = row.querySelector('.variant-val-barcode');
+        window.variantCustomData[key] = {
+            price: priceInput ? priceInput.value : '',
+            stock: stockInput ? stockInput.value : '',
+            sku: skuInput ? skuInput.value : '',
+            barcode: barcodeInput ? barcodeInput.value : '',
+            userEdited: priceInput ? !!priceInput.dataset.userEdited : false
+        };
+    });
+
+    const prop1Name = (document.getElementById('prop-1-name')?.value || 'Cor').trim();
+    const prop1Raw = document.getElementById('prop-1-values')?.value || '';
+    const prop1Values = prop1Raw.split(',').map(s => s.trim()).filter(s => s !== '');
+
+    const prop2Enabled = document.getElementById('chk-enable-prop-2')?.checked ?? true;
+    const prop2Name = (document.getElementById('prop-2-name')?.value || 'Modelo').trim();
+    const prop2Raw = document.getElementById('prop-2-values')?.value || '';
+    const prop2Values = prop2Enabled ? prop2Raw.split(',').map(s => s.trim()).filter(s => s !== '') : [];
+
+    const basePrice = parseFloat(document.getElementById('prod-price')?.value || 0).toFixed(2);
+
+    let combinations = [];
+    if (prop1Values.length > 0 && prop2Values.length > 0) {
+        prop1Values.forEach(v1 => {
+            prop2Values.forEach(v2 => {
+                combinations.push({
+                    values: [v1, v2],
+                    key: `${v1}___${v2}`,
+                    label: `${v1} / ${v2}`
+                });
+            });
+        });
+    } else if (prop1Values.length > 0) {
+        prop1Values.forEach(v1 => {
+            combinations.push({
+                values: [v1],
+                key: `${v1}`,
+                label: `${v1}`
+            });
+        });
+    } else if (prop2Values.length > 0) {
+        prop2Values.forEach(v2 => {
+            combinations.push({
+                values: [v2],
+                key: `${v2}`,
+                label: `${v2}`
+            });
+        });
     }
-}
 
-function openUnifyModal() {
-    if (window.selectedVisorProducts.size < 2) {
-        showToast('Selecione pelo menos 2 produtos do eGestor para unificar em grade.', 'warning');
+    if (badge) badge.textContent = combinations.length;
+
+    if (combinations.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-dim); padding: 20px;">Nenhuma opção definida. Preencha os valores acima (ex: Verde, Rosa, Preto).</td></tr>`;
         return;
     }
 
-    const items = Array.from(window.selectedVisorProducts.values());
-    const parentNameInput = document.getElementById('unify-parent-name');
-    const countSpan = document.getElementById('unify-items-count');
-    if (countSpan) countSpan.textContent = items.length;
-
-    if (parentNameInput) {
-        let suggested = items[0].nome || '';
-        suggested = suggested
-            .replace(/\s*[-–/]\s*(PP|P|M|G|GG|XG|\d{2})\s*$/i, '')
-            .replace(/\s*[-–/]\s*[A-Za-zÀ-ÿ0-9]+\s*$/i, '')
-            .trim();
-        parentNameInput.value = suggested || items[0].nome;
-    }
-
-    renderUnifyTableRows(items);
-    document.getElementById('unify-modal').classList.add('active');
-}
-
-function closeUnifyModal() {
-    document.getElementById('unify-modal').classList.remove('active');
-}
-
-function onAttributeToggle() {
-    const corChk = document.getElementById('attr-cor-chk');
-    const tamChk = document.getElementById('attr-tam-chk');
-
-    if (!corChk.checked && !tamChk.checked) {
-        showToast('Selecione pelo menos um atributo (Cor ou Tamanho).', 'warning');
-        tamChk.checked = true;
-    }
-
-    const showCor = corChk.checked;
-    const showTam = tamChk.checked;
-
-    document.querySelectorAll('.col-attr-cor').forEach(el => {
-        el.style.display = showCor ? '' : 'none';
-        const input = el.querySelector('input');
-        if (input) input.required = showCor;
-    });
-
-    document.querySelectorAll('.col-attr-tam').forEach(el => {
-        el.style.display = showTam ? '' : 'none';
-        const input = el.querySelector('input');
-        if (input) input.required = showTam;
-    });
-}
-
-function renderUnifyTableRows(items) {
-    const tbody = document.getElementById('unify-table-body');
-    if (!tbody) return;
-
-    tbody.innerHTML = items.map(p => {
-        let guessedCor = '';
-        let guessedTam = '';
-
-        const parts = (p.nome || '').split(/[-–/]/).map(s => s.trim());
-        if (parts.length >= 3) {
-            guessedCor = parts[1];
-            guessedTam = parts[2];
-        } else if (parts.length === 2) {
-            if (/^(PP|P|M|G|GG|XG|\d{2})$/i.test(parts[1])) {
-                guessedTam = parts[1].toUpperCase();
-            } else {
-                guessedCor = parts[1];
-            }
-        }
-
-        const stockVal = parseFloat(p.estoque || 0);
+    tbody.innerHTML = combinations.map(c => {
+        const prev = window.variantCustomData[c.key] || {};
+        const priceVal = prev.price !== undefined && prev.price !== '' ? prev.price : (basePrice > 0 ? basePrice : '0.00');
+        const stockVal = prev.stock !== undefined && prev.stock !== '' ? prev.stock : '1';
+        const skuVal = prev.sku || '';
+        const barcodeVal = prev.barcode || '';
+        const userEditedAttr = prev.userEdited ? 'data-user-edited="true"' : '';
 
         return `
-            <tr id="unify-row-${p.codigo}" style="border-bottom: 1px solid var(--border-color);">
-                <td style="padding: 6px 10px;"><strong>#${p.codigo}</strong></td>
-                <td style="padding: 6px 10px; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(p.nome)}">
-                    ${escapeHtml(p.nome)}
+            <tr class="variant-row" data-combo-key="${escapeHtml(c.key)}" data-values='${escapeHtml(JSON.stringify(c.values))}'>
+                <td style="font-weight: 500;">
+                    <span style="display: inline-block; background: rgba(255,255,255,0.08); padding: 3px 8px; border-radius: 4px;">
+                        ${escapeHtml(c.label)}
+                    </span>
                 </td>
-                <td class="col-attr-cor" style="padding: 6px 10px;">
-                    <input type="text" class="form-control unify-val-cor" data-codigo="${p.codigo}" value="${escapeHtml(guessedCor)}" placeholder="Ex: Verde" style="padding: 4px 8px; font-size: 12px;">
+                <td>
+                    <input type="number" step="0.01" min="0" class="form-control variant-val-price" value="${priceVal}" placeholder="0.00" ${userEditedAttr} onchange="this.dataset.userEdited='true'">
                 </td>
-                <td class="col-attr-tam" style="padding: 6px 10px;">
-                    <input type="text" class="form-control unify-val-tam" data-codigo="${p.codigo}" value="${escapeHtml(guessedTam)}" placeholder="Ex: M" style="padding: 4px 8px; font-size: 12px;">
+                <td>
+                    <input type="number" step="1" min="0" class="form-control variant-val-stock" value="${stockVal}" placeholder="0" required>
                 </td>
-                <td style="padding: 6px 10px;">
-                    <input type="number" step="0.01" class="form-control unify-val-price" data-codigo="${p.codigo}" value="${parseFloat(p.preco || 0).toFixed(2)}" style="padding: 4px 8px; font-size: 12px; width: 90px;">
+                <td>
+                    <input type="text" class="form-control variant-val-sku" value="${escapeHtml(skuVal)}" placeholder="Auto">
                 </td>
-                <td style="padding: 6px 10px; font-weight: 600; color: ${stockVal > 0 ? '#10b981' : '#ef4444'};">
-                    ${stockVal} un
-                </td>
-                <td style="padding: 6px 10px; text-align: center;">
-                    <button type="button" class="btn btn-secondary btn-sm" onclick="removeUnifyRow('${p.codigo}')" style="padding: 2px 6px; color: var(--danger); font-size: 12px; line-height: 1;" title="Remover da grade">&times;</button>
+                <td>
+                    <input type="text" class="form-control variant-val-barcode" value="${escapeHtml(barcodeVal)}" placeholder="Opcional">
                 </td>
             </tr>
         `;
     }).join('');
-
-    onAttributeToggle();
 }
 
-function removeUnifyRow(codigo) {
-    codigo = String(codigo);
-    window.selectedVisorProducts.delete(codigo);
-    const row = document.getElementById(`unify-row-${codigo}`);
-    if (row) row.remove();
-
-    const chk = document.querySelector(`.visor-checkbox[data-codigo="${codigo}"]`);
-    if (chk) chk.checked = false;
-
-    updateMasterCheckboxState();
-    updateUnifyButtonState();
-
-    const countSpan = document.getElementById('unify-items-count');
-    if (countSpan) countSpan.textContent = window.selectedVisorProducts.size;
-
-    if (window.selectedVisorProducts.size < 2) {
-        closeUnifyModal();
-        showToast('É necessário pelo menos 2 produtos selecionados para formar uma grade.', 'info');
-    }
-}
-
-async function submitUnifyProducts(e) {
+async function submitFullProduct(e) {
     e.preventDefault();
-    const parentName = document.getElementById('unify-parent-name').value.trim();
-    if (!parentName) {
-        showToast('Informe o nome principal do produto na Nuvemshop.', 'error');
+
+    const name = document.getElementById('prod-name').value.trim();
+    if (!name) {
+        showToast('O nome do produto é obrigatório.', 'error');
+        document.getElementById('prod-name').focus();
         return;
     }
 
-    const hasCor = document.getElementById('attr-cor-chk').checked;
-    const hasTam = document.getElementById('attr-tam-chk').checked;
-    const attributes = [];
-    if (hasCor) attributes.push('Cor');
-    if (hasTam) attributes.push('Tamanho');
-
-    if (attributes.length === 0) {
-        showToast('Selecione pelo menos um atributo (Cor ou Tamanho).', 'error');
+    const price = parseFloat(document.getElementById('prod-price').value || 0);
+    if (price <= 0) {
+        showToast('Informe um preço de venda válido maior que zero.', 'error');
+        document.getElementById('prod-price').focus();
         return;
     }
 
-    const items = Array.from(window.selectedVisorProducts.values());
-    if (items.length < 2) {
-        showToast('Selecione pelo menos 2 produtos para unificar.', 'error');
-        return;
-    }
+    const costPrice = parseFloat(document.getElementById('prod-cost-price')?.value || 0);
+    const description = document.getElementById('prod-description')?.value.trim() || '';
 
-    const variants = [];
-    for (const p of items) {
-        const codigo = String(p.codigo);
-        const values = [];
+    // Imagens (uma por linha)
+    const imagesRaw = document.getElementById('prod-images')?.value || '';
+    const images = imagesRaw.split('\n').map(s => s.trim()).filter(s => s.startsWith('http'));
 
-        if (hasCor) {
-            const corInput = document.querySelector(`.unify-val-cor[data-codigo="${codigo}"]`);
-            const corVal = corInput ? corInput.value.trim() : '';
-            if (!corVal) {
-                showToast(`Informe a Cor para o produto #${codigo} (${p.nome})`, 'warning');
-                if (corInput) corInput.focus();
-                return;
-            }
-            values.push(corVal);
+    const hasVariants = document.getElementById('chk-has-variants')?.checked ?? false;
+
+    let payload = {
+        name: name,
+        description: description,
+        price: price,
+        cost_price: costPrice,
+        images: images,
+        has_variants: hasVariants
+    };
+
+    if (hasVariants) {
+        const prop1Name = (document.getElementById('prop-1-name')?.value || 'Cor').trim();
+        const prop2Enabled = document.getElementById('chk-enable-prop-2')?.checked ?? true;
+        const prop2Name = (document.getElementById('prop-2-name')?.value || 'Modelo').trim();
+
+        const attributes = [];
+        if (prop1Name) attributes.push(prop1Name);
+        if (prop2Enabled && prop2Name) attributes.push(prop2Name);
+
+        const rows = document.querySelectorAll('.variant-row');
+        if (rows.length === 0) {
+            showToast('Nenhuma variação gerada para a grade.', 'error');
+            return;
         }
 
-        if (hasTam) {
-            const tamInput = document.querySelector(`.unify-val-tam[data-codigo="${codigo}"]`);
-            const tamVal = tamInput ? tamInput.value.trim() : '';
-            if (!tamVal) {
-                showToast(`Informe o Tamanho para o produto #${codigo} (${p.nome})`, 'warning');
-                if (tamInput) tamInput.focus();
-                return;
-            }
-            values.push(tamVal);
+        const variants = [];
+        for (const row of rows) {
+            const rawValues = JSON.parse(row.dataset.values || '[]');
+            const priceInput = row.querySelector('.variant-val-price');
+            const stockInput = row.querySelector('.variant-val-stock');
+            const skuInput = row.querySelector('.variant-val-sku');
+            const barcodeInput = row.querySelector('.variant-val-barcode');
+
+            const varPrice = priceInput && priceInput.value !== '' ? parseFloat(priceInput.value) : price;
+            const varStock = stockInput && stockInput.value !== '' ? parseFloat(stockInput.value) : 0;
+            const varSku = skuInput ? skuInput.value.trim() : '';
+            const varBarcode = barcodeInput ? barcodeInput.value.trim() : '';
+
+            variants.push({
+                values: rawValues,
+                price: varPrice,
+                cost_price: costPrice,
+                stock: varStock,
+                sku: varSku,
+                barcode: varBarcode
+            });
         }
 
-        const priceInput = document.querySelector(`.unify-val-price[data-codigo="${codigo}"]`);
-        const price = priceInput ? parseFloat(priceInput.value || 0) : parseFloat(p.preco || 0);
-
-        variants.push({
-            egestor_id: codigo,
-            sku: p.sku || codigo,
-            barcode: p.barcode || '',
-            price: price,
-            stock: parseFloat(p.estoque || 0),
-            values: values
-        });
+        payload.attributes = attributes;
+        payload.variants = variants;
+    } else {
+        // Produto Simples
+        payload.stock = parseFloat(document.getElementById('prod-simple-stock')?.value || 0);
+        payload.sku = document.getElementById('prod-simple-sku')?.value.trim() || '';
+        payload.barcode = document.getElementById('prod-simple-barcode')?.value.trim() || '';
     }
 
-    const btn = document.getElementById('btn-submit-unify');
-    const originalText = btn.innerHTML;
+    const btn = document.getElementById('btn-submit-product');
+    const statusBox = document.getElementById('create-product-status-box');
+    const statusText = document.getElementById('create-product-status-text');
+
+    const originalBtnHtml = btn.innerHTML;
     btn.disabled = true;
-    btn.innerHTML = '⏳ Criando Grade na Nuvemshop...';
+    btn.innerHTML = '⏳ Cadastrando no eGestor & Nuvemshop...';
+
+    if (statusBox && statusText) {
+        statusBox.style.display = 'block';
+        statusText.innerHTML = `
+            <strong>Processando Cadastro:</strong><br>
+            1. Salvando ${hasVariants ? payload.variants.length + ' variações individuais' : 'produto'} no eGestor...<br>
+            2. Criando anúncio unificado na Nuvemshop...<br>
+            3. Gravando sincronização de estoque...
+        `;
+    }
 
     try {
-        const payload = {
-            name: parentName,
-            attributes: attributes,
-            variants: variants
-        };
-
-        const res = await fetch('api.php?action=create_unified_product', {
+        const res = await fetch('api.php?action=create_full_product', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -1076,25 +1052,44 @@ async function submitUnifyProducts(e) {
         const data = await res.json();
 
         if (data.success) {
-            showToast(data.message || 'Produto com variações criado com sucesso!', 'success');
-            closeUnifyModal();
+            showToast(data.message || 'Produto cadastrado com sucesso!', 'success');
+            if (statusBox && statusText) {
+                statusText.innerHTML = `✅ <strong>Sucesso!</strong> Produto criado com êxito no eGestor e na Nuvemshop.`;
+                setTimeout(() => { statusBox.style.display = 'none'; }, 6000);
+            }
 
-            // Limpa seleções
-            window.selectedVisorProducts.clear();
-            updateMasterCheckboxState();
-            updateUnifyButtonState();
+            // Limpa formulário
+            document.getElementById('form-create-full-product').reset();
+            window.variantCustomData = {};
+            generateVariantsTable();
 
-            // Recarrega tabelas e contadores
-            loadVisorProducts(window.currentVisorPage || 1);
+            // Atualiza status e tabelas
             loadProducts();
             loadStatus(true);
+            loadLogs();
+
+            // Notifica e sugere ir para a aba de produtos
+            setTimeout(() => {
+                const goTab = confirm('Produto cadastrado com sucesso no eGestor e na Nuvemshop! Deseja visualizar na lista de produtos?');
+                if (goTab) {
+                    const prodTabBtn = document.querySelector('.tab-btn[data-tab="tab-products"]');
+                    if (prodTabBtn) prodTabBtn.click();
+                }
+            }, 500);
+
         } else {
-            showToast('Falha na criação da grade: ' + (data.error || 'Erro desconhecido'), 'error');
+            showToast('Erro ao cadastrar: ' + (data.error || 'Falha no processo'), 'error');
+            if (statusBox && statusText) {
+                statusText.innerHTML = `❌ <strong>Erro:</strong> ${escapeHtml(data.error || 'Falha ao processar')}`;
+            }
         }
     } catch (err) {
-        showToast('Erro de comunicação ao criar produto unificado.', 'error');
+        showToast('Erro de comunicação com o servidor ao cadastrar produto.', 'error');
+        if (statusBox && statusText) {
+            statusText.innerHTML = `❌ <strong>Erro:</strong> Falha de conexão com a API.`;
+        }
     } finally {
         btn.disabled = false;
-        btn.innerHTML = originalText;
+        btn.innerHTML = originalBtnHtml;
     }
 }

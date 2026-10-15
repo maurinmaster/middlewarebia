@@ -205,6 +205,45 @@ class EGestorClient {
     }
 
     /**
+     * Cria um novo produto no eGestor (PDV)
+     */
+    public function createProduct(array $data): array {
+        $payload = [
+            'descricao' => trim((string)($data['descricao'] ?? $data['name'] ?? 'Produto')),
+            'precoVenda' => (float)($data['precoVenda'] ?? $data['price'] ?? 0),
+            'estoque' => (float)($data['estoque'] ?? $data['stock'] ?? 0),
+            'controlarEstoque' => 1
+        ];
+
+        if (!empty($data['codigoProprio']) || !empty($data['sku'])) {
+            $payload['codigoProprio'] = trim((string)($data['codigoProprio'] ?? $data['sku']));
+        }
+
+        if (!empty($data['precoCusto'])) {
+            $payload['precoCusto'] = (float)$data['precoCusto'];
+        }
+
+        if (!empty($data['refEanGtin']) || !empty($data['barcode'])) {
+            $payload['refEanGtin'] = trim((string)($data['refEanGtin'] ?? $data['barcode']));
+        }
+
+        if (!empty($data['anotacoesInternas'])) {
+            $payload['anotacoesInternas'] = trim((string)$data['anotacoesInternas']);
+        }
+
+        Logger::info("Criando produto no eGestor: '{$payload['descricao']}'", ['payload' => $payload]);
+        return $this->request('POST', '/produtos', $payload);
+    }
+
+    /**
+     * Exclui um produto no eGestor
+     */
+    public function deleteProduct(int|string $codigo): array {
+        Logger::info("Excluindo produto {$codigo} no eGestor...");
+        return $this->request('DELETE', "/produtos/{$codigo}");
+    }
+
+    /**
      * Busca produto no eGestor por SKU (codigoProprio) ou código
      */
     public function findProductBySku(string $sku): ?array {

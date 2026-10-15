@@ -561,3 +561,155 @@ tr:hover td {
     grid-template-columns: 1fr;
   }
 }
+
+/* ========================================================
+   TELA DE CADASTRO DE PRODUTO (ESTILO NUVEMSHOP)
+   ======================================================== */
+.product-create-container {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+@media (max-width: 992px) {
+  .product-create-container {
+    grid-template-columns: 1fr;
+  }
+}
+
+.product-form-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 20px 24px;
+  margin-bottom: 20px;
+}
+
+.product-form-card-header {
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 12px;
+  margin-bottom: 18px;
+}
+
+.product-form-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.product-form-card-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+.form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.form-grid-3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 640px) {
+  .form-grid-2, .form-grid-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.variant-prop-box {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
+.variant-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.25);
+  margin-top: 14px;
+}
+
+.variant-table-wrap table {
+  width: 100%;
+  font-size: 13px;
+  border-collapse: collapse;
+}
+
+.variant-table-wrap th {
+  background: rgba(0, 0, 0, 0.4);
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-align: left;
+}
+
+.variant-table-wrap td {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.variant-table-wrap input {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.info-sidebar-box {
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: var(--radius-md);
+  padding: 18px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.info-sidebar-box h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #93c5fd;
+  margin-bottom: 10px;
+}
+
+.info-sidebar-box ul {
+  padding-left: 18px;
+  color: var(--text-muted);
+}
+
+.info-sidebar-box li {
+  margin-bottom: 8px;
+}
+
+.btn-primary-action {
+  background-color: #2563eb;
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 12px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  transition: background-color 0.15s ease;
+}
+
+.btn-primary-action:hover {
+  background-color: #1d4ed8;
+}
+
+.btn-primary-action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}

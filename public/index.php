@@ -98,6 +98,7 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
   <!-- Tabs Navigation -->
   <div class="tabs">
     <button class="tab-btn active" data-tab="tab-products">📦 Produtos na Nuvemshop</button>
+    <button class="tab-btn" data-tab="tab-novo-produto" style="font-weight: 600; color: #60a5fa;">➕ Cadastrar Produto</button>
     <button class="tab-btn" data-tab="tab-visor" onclick="loadVisorProducts(1)">🔍 Vizor: eGestor vs Nuvemshop</button>
     <button class="tab-btn" data-tab="tab-logs">📜 Logs em Tempo Real</button>
     <button class="tab-btn" data-tab="tab-guide">📖 Como Configurar no eGestor</button>
@@ -127,6 +128,7 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
 
           <button class="btn btn-secondary btn-sm" onclick="resetProductsFilters()">Limpar</button>
           <button class="btn btn-primary btn-sm" onclick="loadProducts()">Atualizar</button>
+          <button class="btn btn-primary btn-sm" onclick="switchToNewProductTab()" style="font-weight: 600; background: #2563eb;">➕ Cadastrar Novo</button>
         </div>
       </div>
       <table>
@@ -146,6 +148,203 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
         </tbody>
       </table>
     </div>
+  </div>
+
+  <!-- Tab: Cadastrar Produto (Estilo Nuvemshop) -->
+  <div id="tab-novo-produto" class="tab-content">
+    <form id="form-create-full-product" onsubmit="submitFullProduct(event)">
+      <div class="product-create-container">
+        <!-- Coluna Principal (Esquerda) -->
+        <div class="product-create-main">
+
+          <!-- Card 1: Nome e Descrição -->
+          <div class="product-form-card">
+            <div class="product-form-card-header">
+              <div class="product-form-card-title">📝 Nome e Descrição</div>
+              <div class="product-form-card-desc">Informações principais que aparecem na loja e no PDV</div>
+            </div>
+            <div class="form-group">
+              <label for="prod-name"><strong>Nome do Produto *</strong></label>
+              <input type="text" id="prod-name" class="form-control" required placeholder="Ex: Vestido Estampado Bia Flores" style="font-size: 15px; padding: 12px 14px;">
+              <small style="color: var(--text-dim); font-size: 11px; margin-top: 4px; display: block;">
+                O nome principal será usado na Nuvemshop e servirá de base para o nome de cada variação no eGestor.
+              </small>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="prod-description">Descrição Completa (Opcional)</label>
+              <textarea id="prod-description" class="form-control" rows="4" placeholder="Descreva os detalhes da peça, tecido, caimento e recomendações..."></textarea>
+            </div>
+          </div>
+
+          <!-- Card 2: Preço e Custos -->
+          <div class="product-form-card">
+            <div class="product-form-card-header">
+              <div class="product-form-card-title">💰 Preços e Custos</div>
+              <div class="product-form-card-desc">Defina o preço de venda para os clientes e o custo para sua gestão</div>
+            </div>
+            <div class="form-grid-2">
+              <div class="form-group">
+                <label for="prod-price"><strong>Preço de Venda (R$) *</strong></label>
+                <input type="number" step="0.01" min="0" id="prod-price" class="form-control" required placeholder="149.90" oninput="onBasePriceChange()">
+                <small style="color: var(--text-dim); font-size: 11px;">Preço exibido na Nuvemshop e no eGestor</small>
+              </div>
+              <div class="form-group">
+                <label for="prod-cost-price">Preço de Custo (R$)</label>
+                <input type="number" step="0.01" min="0" id="prod-cost-price" class="form-control" placeholder="65.00">
+                <small style="color: var(--text-dim); font-size: 11px;">Gravado no eGestor para cálculo de lucro</small>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 3: Variações (Cor / Modelo / Tamanho) -->
+          <div class="product-form-card">
+            <div class="product-form-card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+              <div>
+                <div class="product-form-card-title">🎨 Variações (Cores e Modelos/Tamanhos)</div>
+                <div class="product-form-card-desc">Crie seletores de cor e modelo na Nuvemshop mantendo cada item separado no eGestor</div>
+              </div>
+              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; font-weight: 600; color: #fff; background: rgba(255,255,255,0.06); padding: 6px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+                <input type="checkbox" id="chk-has-variants" onchange="toggleHasVariants(this.checked)" checked style="width: 16px; height: 16px; cursor: pointer;">
+                <span>Este produto possui variações</span>
+              </label>
+            </div>
+
+            <!-- Bloco de Produto Simples (quando NÃO tiver variações) -->
+            <div id="simple-product-block" style="display: none;">
+              <div class="form-grid-3">
+                <div class="form-group">
+                  <label for="prod-simple-stock"><strong>Estoque Inicial *</strong></label>
+                  <input type="number" step="1" min="0" id="prod-simple-stock" class="form-control" value="1" placeholder="Ex: 10">
+                </div>
+                <div class="form-group">
+                  <label for="prod-simple-sku">SKU / Código Interno</label>
+                  <input type="text" id="prod-simple-sku" class="form-control" placeholder="Ex: VEST-01">
+                  <small style="color: var(--text-dim); font-size: 11px;">Se vazio, usará o código do eGestor</small>
+                </div>
+                <div class="form-group">
+                  <label for="prod-simple-barcode">Código de Barras (EAN)</label>
+                  <input type="text" id="prod-simple-barcode" class="form-control" placeholder="Ex: 789123456789">
+                </div>
+              </div>
+            </div>
+
+            <!-- Bloco de Grade / Variações (quando TIVER variações) -->
+            <div id="variants-product-block">
+              <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
+                Digite as opções de cada propriedade separadas por <strong>vírgula</strong>. As combinações serão geradas automaticamente abaixo:
+              </p>
+
+              <!-- Propriedade 1: Cor -->
+              <div class="variant-prop-box">
+                <div class="form-grid-2">
+                  <div class="form-group" style="margin-bottom: 0;">
+                    <label>Nome da Propriedade 1:</label>
+                    <input type="text" id="prop-1-name" class="form-control" value="Cor" placeholder="Ex: Cor" oninput="generateVariantsTable()">
+                  </div>
+                  <div class="form-group" style="margin-bottom: 0;">
+                    <label>Valores (separados por vírgula):</label>
+                    <input type="text" id="prop-1-values" class="form-control" value="Verde, Rosa, Preto" placeholder="Ex: Verde, Rosa, Preto" oninput="generateVariantsTable()">
+                  </div>
+                </div>
+              </div>
+
+              <!-- Propriedade 2: Modelo ou Tamanho -->
+              <div class="variant-prop-box" id="prop-2-box">
+                <div class="form-grid-2">
+                  <div class="form-group" style="margin-bottom: 0;">
+                    <label>Nome da Propriedade 2:</label>
+                    <input type="text" id="prop-2-name" class="form-control" value="Modelo" placeholder="Ex: Modelo ou Tamanho" oninput="generateVariantsTable()">
+                  </div>
+                  <div class="form-group" style="margin-bottom: 0;">
+                    <label>Valores (separados por vírgula):</label>
+                    <input type="text" id="prop-2-values" class="form-control" value="P, M, G" placeholder="Ex: P, M, G ou Curto, Longo" oninput="generateVariantsTable()">
+                  </div>
+                </div>
+              </div>
+
+              <!-- Botão para alternar 2ª propriedade ativa/inativa -->
+              <div style="display: flex; justify-content: space-between; align-items: center; margin: 10px 0 14px 0;">
+                <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); cursor: pointer;">
+                  <input type="checkbox" id="chk-enable-prop-2" checked onchange="toggleProp2(this.checked)">
+                  <span>Incluir 2ª Propriedade (Modelo/Tamanho)</span>
+                </label>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="generateVariantsTable()">🔄 Recalcular Combinações</button>
+              </div>
+
+              <!-- Tabela com a matriz de variações -->
+              <div>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                  <label style="font-weight: 600; font-size: 13px;">
+                    Combinações Geradas (<span id="variants-count-badge">0</span> variações):
+                  </label>
+                  <span style="font-size: 11px; color: var(--text-dim);">Ajuste estoque e preços individuais se necessário</span>
+                </div>
+                <div class="variant-table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Variação</th>
+                        <th style="width: 110px;">Preço (R$)</th>
+                        <th style="width: 90px;">Estoque *</th>
+                        <th style="width: 140px;">SKU (Opcional)</th>
+                        <th style="width: 140px;">Cód. Barras</th>
+                      </tr>
+                    </thead>
+                    <tbody id="variants-tbody">
+                      <!-- Preenchido via app.js -->
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 4: Fotos (Opcional) -->
+          <div class="product-form-card">
+            <div class="product-form-card-header">
+              <div class="product-form-card-title">🖼️ Fotos do Produto (Opcional)</div>
+              <div class="product-form-card-desc">Cole links diretos de imagens na web (uma URL por linha)</div>
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <textarea id="prod-images" class="form-control" rows="3" placeholder="https://exemplo.com/foto1.jpg&#10;https://exemplo.com/foto2.jpg"></textarea>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Coluna Lateral (Direita) -->
+        <div class="product-create-sidebar">
+
+          <!-- Card de Publicação -->
+          <div class="product-form-card" style="position: sticky; top: 20px;">
+            <div class="product-form-card-header">
+              <div class="product-form-card-title">🚀 Publicação</div>
+            </div>
+
+            <div style="margin-bottom: 16px;">
+              <button type="submit" id="btn-submit-product" class="btn-primary-action">
+                💾 Salvar e Cadastrar Produto
+              </button>
+            </div>
+
+            <div id="create-product-status-box" style="display: none; padding: 12px; border-radius: var(--radius-sm); font-size: 12px; margin-bottom: 16px; background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); line-height: 1.5;">
+              <div id="create-product-status-text">Processando...</div>
+            </div>
+
+            <!-- Card Explicativo de Integração -->
+            <div class="info-sidebar-box">
+              <h4>🛡️ Como o Middleware processa:</h4>
+              <ul>
+                <li><strong>Nuvemshop:</strong> Cria um anúncio com seletores unificados (Cor e Modelo).</li>
+                <li><strong>eGestor:</strong> Cria cada variação como um produto separado no seu PDV físico.</li>
+                <li><strong>Baixa Direcionada:</strong> Vendas na Nuvemshop abatem o produto exato da cor/modelo no eGestor.</li>
+              </ul>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </form>
   </div>
 
   <!-- Tab: Vizor eGestor vs Nuvemshop -->
@@ -176,9 +375,6 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
 
           <button class="btn btn-secondary btn-sm" onclick="resetVisorFilters()">Limpar</button>
           <button class="btn btn-primary btn-sm" onclick="loadVisorProducts(1)">Buscar</button>
-          <button id="btn-open-unify-modal" class="btn btn-sm" onclick="openUnifyModal()" style="display: none; background: linear-gradient(135deg, #8b5cf6, #ec4899); color: #fff; border: none; font-weight: 600; box-shadow: 0 2px 10px rgba(139,92,246,0.35); cursor: pointer;">
-            🧩 Unificar em Grade (<span id="unify-selected-count">0</span>)
-          </button>
         </div>
       </div>
 
@@ -191,7 +387,6 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
       <table>
         <thead>
           <tr>
-            <th style="width: 38px; text-align: center;"><input type="checkbox" id="visor-select-all" title="Selecionar todos da página" onchange="toggleSelectAllVisor(this)" style="cursor: pointer;"></th>
             <th>Cód. eGestor</th>
             <th>SKU</th>
             <th>Código de Barras</th>
@@ -460,85 +655,6 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
         <button type="button" class="btn btn-secondary btn-sm" id="btn-cancel-export" onclick="stopBatchExport()">Interromper</button>
       </div>
     </div>
-<!-- Modal Unificar Produtos em Grade (Nuvemshop) -->
-<div id="unify-modal" class="modal-overlay">
-  <div class="modal" style="max-width: 920px; width: 95%;">
-    <div class="modal-header">
-      <div>
-        <h3 style="display: flex; align-items: center; gap: 8px;">
-          <span>🧩</span> Unificar Variações em Grade na Nuvemshop
-        </h3>
-        <p style="font-size: 12px; color: var(--text-dim); margin: 3px 0 0 0;">
-          Crie um único anúncio com seletores de Cor e Tamanho na loja online, vinculando cada variação ao seu respectivo código do eGestor.
-        </p>
-      </div>
-      <button class="modal-close" onclick="closeUnifyModal()">&times;</button>
-    </div>
-    <form id="unify-form" onsubmit="submitUnifyProducts(event)">
-      <!-- Nome Principal e Descrição -->
-      <div class="form-group">
-        <label style="font-weight: 600;">Nome Principal do Produto na Nuvemshop *:</label>
-        <input type="text" id="unify-parent-name" class="form-control" required placeholder="Ex: Vestido Floral Midi" style="font-size: 14px;">
-        <small style="color: var(--text-dim); font-size: 11px;">Este será o título principal exibido na sua loja virtual.</small>
-      </div>
-
-      <!-- Atributos da Grade -->
-      <div class="form-group" style="padding: 10px 14px; background: rgba(255,255,255,0.03); border: 1px solid var(--border-color); border-radius: var(--radius-sm);">
-        <label style="font-weight: 600; display: block; margin-bottom: 6px; font-size: 13px;">
-          Atributos da Grade (Escolha os campos que o cliente poderá selecionar):
-        </label>
-        <div style="display: flex; gap: 18px; flex-wrap: wrap;">
-          <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; color: #fff;">
-            <input type="checkbox" id="attr-cor-chk" checked onchange="onAttributeToggle()">
-            <span>🎨 <strong>Cor</strong></span>
-          </label>
-          <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; color: #fff;">
-            <input type="checkbox" id="attr-tam-chk" checked onchange="onAttributeToggle()">
-            <span>📏 <strong>Tamanho</strong></span>
-          </label>
-        </div>
-      </div>
-
-      <!-- Tabela de Variantes Selecionadas -->
-      <div style="margin-top: 12px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-          <label style="font-weight: 600; font-size: 13px;">
-            Variações que farão parte desta Grade (<span id="unify-items-count">0</span> produtos selecionados):
-          </label>
-          <span style="font-size: 11px; color: var(--text-dim);">Preencha os valores de cada variação abaixo</span>
-        </div>
-        <div style="max-height: 280px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: rgba(0,0,0,0.2);">
-          <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
-            <thead style="background: rgba(0,0,0,0.4); position: sticky; top: 0; z-index: 2;">
-              <tr>
-                <th style="padding: 8px 10px; width: 85px;">Cód. eGestor</th>
-                <th style="padding: 8px 10px;">Produto Original</th>
-                <th class="col-attr-cor" style="padding: 8px 10px; width: 130px;">Cor *</th>
-                <th class="col-attr-tam" style="padding: 8px 10px; width: 95px;">Tamanho *</th>
-                <th style="padding: 8px 10px; width: 100px;">Preço (R$)</th>
-                <th style="padding: 8px 10px; width: 80px;">Estoque</th>
-                <th style="padding: 8px 10px; width: 35px; text-align: center;"></th>
-              </tr>
-            </thead>
-            <tbody id="unify-table-body">
-              <!-- Inserido dinamicamente via app.js -->
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Aviso de Funcionamento e Garantia -->
-      <div style="margin-top: 14px; padding: 10px 14px; background: rgba(59, 130, 246, 0.08); border-left: 3px solid var(--primary); border-radius: 4px; font-size: 12px; color: #93c5fd; line-height: 1.5;">
-        🛡️ <strong>Baixa Direcionada:</strong> Cada variante na Nuvemshop fica vinculada ao código exato do seu eGestor. Quando uma venda for realizada para a <em>Cor X</em> e <em>Tamanho Y</em>, a baixa será feita exclusivamente no produto correspondente cadastrado no eGestor!
-      </div>
-
-      <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px;">
-        <button type="button" class="btn btn-secondary" onclick="closeUnifyModal()">Cancelar</button>
-        <button type="submit" id="btn-submit-unify" class="btn btn-primary" style="background: linear-gradient(135deg, #8b5cf6, #ec4899); border: none; font-weight: 600; box-shadow: 0 2px 10px rgba(139,92,246,0.35);">
-          🚀 Criar Produto Unificado na Nuvemshop
-        </button>
-      </div>
-    </form>
   </div>
 </div>
 

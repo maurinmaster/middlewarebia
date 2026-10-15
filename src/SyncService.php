@@ -940,6 +940,238 @@ class SyncService {
     }
 
     /**
+     * Cadastro Completo de Produto no Middleware:
+     * Salva o produto na Nuvemshop (com grade unificada de cor/modelo se houver variações)
+     * e salva cada variação SEPARADAMENTE no eGestor (PDV), vinculando automaticamente
+     * os estoques e códigos para que vendas futuras na Nuvemshop deem baixa no produto exato do eGestor.
+     */
+    public function createFullProduct(array $data): array {
+        $name = trim((string)($data['name'] ?? ''));
+        if ($name === '') {
+            return ['success' => false, 'error' => 'O nome do produto é obrigatório.'];
+        }
+
+        $price = (float)($data['price'] ?? 0);
+        $costPrice = !empty($data['cost_price']) ? (float)$data['cost_price'] : 0.0;
+        $description = trim((string)($data['description'] ?? ''));
+        $hasVariants = !empty($data['has_variants']) && !empty($data['variants']);
+        $images = !empty($data['images']) && is_array($data['images']) ? $data['images'] : [];
+
+        // CASO 1: PRODUTO SIMPLES (Sem Variações)
+        if (!$hasVariants) {
+            $stock = (float)($data['stock'] ?? 0);
+            $sku = trim((string)($data['sku'] ?? ''));
+            $barcode = trim((string)($data['barcode'] ?? ''));
+
+            // 1. Cria no eGestor
+            $eData = [
+                'descricao' => $name,
+                'precoVenda' => $price,
+                'precoCusto' => $costPrice,
+                'estoque' => $stock,
+                'codigoProprio' => $sku,
+                'refEanGtin' => $barcode,
+                'anotacoesInternas' => 'Cadastrado via Middleware Bia'
+            ];
+
+            Logger::info("Cadastrando produto simples no eGestor: '{$name}'...");
+            $eRes = $this->egestor->createProduct($eData);
+            if (!$eRes['success'] || empty($eRes['data']['codigo'])) {
+                $err = $eRes['error'] ?? 'Falha ao cadastrar produto no eGestor';
+                Logger::error("Erro no cadastro eGestor: {$err}");
+                return ['success' => false, 'error' => "Erro no eGestor: {$err}"];
+            }
+
+            $egestorId = (string)$eRes['data']['codigo'];
+            $finalSku = $sku !== '' ? $sku : $egestorId;
+
+            // 2. Cria na Nuvemshop
+            $nuvemPayload = [
+                'name' => $name,
+                'description' => $description,
+                'price' => $price,
+                'stock' => (int)$stock,
+                'sku' => $finalSku,
+                'barcode' => $barcode,
+                'images' => $images
+            ];
+
+            Logger::info("Cadastrando produto simples na Nuvemshop: '{$name}' (SKU {$finalSku})...");
+            $nRes = $this->nuvemshop->createProduct($nuvemPayload);
+            if (!$nRes['success'] || empty($nRes['data']['id'])) {
+                $err = $nRes['error'] ?? 'Falha ao cadastrar produto na Nuvemshop';
+                Logger::error("Erro no cadastro Nuvemshop: {$err}");
+                return ['success' => false, 'error' => "Cadastrado no eGestor (#{$egestorId}), mas falhou na Nuvemshop: {$err}"];
+            }
+
+            $nuvemshopProdId = (string)$nRes['data']['id'];
+            $nuvemshopVarId = (string)($nRes['data']['variants'][0]['id'] ?? '');
+
+            // 3. Salva Mapeamento
+            $this->saveMapping([
+                'egestor_id' => $egestorId,
+                'nuvemshop_product_id' => $nuvemshopProdId,
+                'nuvemshop_variant_id' => $nuvemshopVarId,
+                'sku' => $finalSku,
+                'barcode' => $barcode,
+                'name' => $name,
+                'stock_egestor' => $stock,
+                'stock_nuvemshop' => $stock,
+                'price' => $price,
+                'status' => 'synced',
+                'last_sync_direction' => 'full_create_simple'
+            ]);
+
+            Database::logSync('manual', 'full_create_simple', $egestorId, "Produto simples '{$name}' criado no eGestor (#{$egestorId}) e Nuvemshop (#{$nuvemshopProdId})", 'success');
+
+            return [
+                'success' => true,
+                'message' => "Produto '{$name}' cadastrado com sucesso no eGestor e na Nuvemshop!",
+                'nuvemshop_product_id' => $nuvemshopProdId,
+                'egestor_id' => $egestorId
+            ];
+        }
+
+        // CASO 2: PRODUTO COM VARIAÇÕES (GRADE: COR / MODELO / TAMANHO)
+        $attributes = (array)($data['attributes'] ?? []);
+        if (empty($attributes)) {
+            $attributes = ['Cor', 'Tamanho'];
+        }
+
+        $variants = (array)$data['variants'];
+        if (count($variants) < 1) {
+            return ['success' => false, 'error' => 'Nenhuma variação informada para a grade.'];
+        }
+
+        Logger::info("Iniciando cadastro completo com grade para '{$name}' (" . count($variants) . " variações)...");
+
+        // 1. Cria cada variação separada no eGestor
+        $createdEGestorItems = [];
+        $nuvemVariants = [];
+
+        foreach ($variants as $idx => $v) {
+            $rawValues = (array)($v['values'] ?? []);
+            $valuesText = implode(' - ', array_map('trim', $rawValues));
+            $varName = $name . ($valuesText !== '' ? " - {$valuesText}" : " - Var " . ($idx + 1));
+            $varPrice = isset($v['price']) && $v['price'] !== '' ? (float)$v['price'] : $price;
+            $varCost = isset($v['cost_price']) && $v['cost_price'] !== '' ? (float)$v['cost_price'] : $costPrice;
+            $varStock = isset($v['stock']) && $v['stock'] !== '' ? (float)$v['stock'] : 0.0;
+            $varSku = trim((string)($v['sku'] ?? ''));
+            $varBarcode = trim((string)($v['barcode'] ?? ''));
+
+            // Cria produto individual no eGestor (PDV)
+            $eData = [
+                'descricao' => $varName,
+                'precoVenda' => $varPrice,
+                'precoCusto' => $varCost,
+                'estoque' => $varStock,
+                'codigoProprio' => $varSku,
+                'refEanGtin' => $varBarcode,
+                'anotacoesInternas' => "Grade: " . implode(' / ', $rawValues)
+            ];
+
+            $eRes = $this->egestor->createProduct($eData);
+            if (!$eRes['success'] || empty($eRes['data']['codigo'])) {
+                $err = $eRes['error'] ?? 'Falha ao criar item no eGestor';
+                Logger::error("Erro ao cadastrar variação no eGestor [{$varName}]: {$err}");
+                return ['success' => false, 'error' => "Erro ao criar '{$varName}' no eGestor: {$err}"];
+            }
+
+            $createdEGestorId = (string)$eRes['data']['codigo'];
+            $finalVarSku = $varSku !== '' ? $varSku : $createdEGestorId;
+
+            $createdEGestorItems[] = [
+                'egestor_id' => $createdEGestorId,
+                'name' => $varName,
+                'sku' => $finalVarSku,
+                'barcode' => $varBarcode,
+                'price' => $varPrice,
+                'stock' => $varStock,
+                'values_text' => implode(' / ', $rawValues)
+            ];
+
+            // Monta variante para a Nuvemshop
+            $nuvemValues = [];
+            foreach ($rawValues as $val) {
+                $nuvemValues[] = ['pt' => trim((string)$val)];
+            }
+
+            $nuvemVariants[] = [
+                'price' => $varPrice,
+                'stock' => (int)$varStock,
+                'sku' => $finalVarSku,
+                'barcode' => $varBarcode,
+                'values' => $nuvemValues
+            ];
+        }
+
+        // 2. Cria o produto unificado com grade na Nuvemshop
+        $nuvemPayload = [
+            'name' => $name,
+            'description' => $description,
+            'attributes' => array_map(fn($a) => is_array($a) ? $a : ['pt' => trim((string)$a)], $attributes),
+            'variants' => $nuvemVariants,
+            'images' => $images
+        ];
+
+        Logger::info("Criando produto com grade unificada na Nuvemshop: '{$name}' com " . count($nuvemVariants) . " variações...");
+        $nRes = $this->nuvemshop->createProduct($nuvemPayload);
+
+        if (!$nRes['success'] || empty($nRes['data']['id'])) {
+            $err = $nRes['error'] ?? 'Falha ao criar produto unificado na Nuvemshop';
+            Logger::error("Erro na criação unificada na Nuvemshop: {$err}");
+            return ['success' => false, 'error' => "Produtos criados no eGestor, mas falhou ao criar na Nuvemshop: {$err}"];
+        }
+
+        $createdNuvemProduct = $nRes['data'];
+        $createdNuvemProdId = (string)$createdNuvemProduct['id'];
+        $returnedVariants = $createdNuvemProduct['variants'] ?? [];
+
+        // 3. Salva o mapeamento de cada variação
+        $mappedCount = 0;
+        foreach ($createdEGestorItems as $i => $item) {
+            $createdVariant = $returnedVariants[$i] ?? null;
+            if (!$createdVariant || (string)($createdVariant['sku'] ?? '') !== $item['sku']) {
+                foreach ($returnedVariants as $rv) {
+                    if ((string)($rv['sku'] ?? '') === $item['sku']) {
+                        $createdVariant = $rv;
+                        break;
+                    }
+                }
+            }
+
+            $createdVarId = (string)($createdVariant['id'] ?? '');
+
+            $this->saveMapping([
+                'egestor_id' => $item['egestor_id'],
+                'nuvemshop_product_id' => $createdNuvemProdId,
+                'nuvemshop_variant_id' => $createdVarId,
+                'sku' => $item['sku'],
+                'barcode' => $item['barcode'],
+                'name' => $item['name'],
+                'stock_egestor' => $item['stock'],
+                'stock_nuvemshop' => $item['stock'],
+                'price' => $item['price'],
+                'status' => 'synced',
+                'last_sync_direction' => 'full_create_with_variants'
+            ]);
+
+            $mappedCount++;
+        }
+
+        $successMsg = "Produto '{$name}' cadastrado com sucesso! Criado na Nuvemshop com grade (ID #{$createdNuvemProdId}) e {$mappedCount} variações cadastradas separadamente no eGestor.";
+        Logger::info($successMsg);
+        Database::logSync('manual', 'full_create_with_variants', $createdNuvemProdId, $successMsg, 'success');
+
+        return [
+            'success' => true,
+            'message' => $successMsg,
+            'nuvemshop_product_id' => $createdNuvemProdId,
+            'variants_count' => $mappedCount
+        ];
+    }
+
+    /**
      * Cria um produto unificado com grade (múltiplas variações) na Nuvemshop
      * vinculando cada variação ao seu respectivo produto no eGestor.
      */
