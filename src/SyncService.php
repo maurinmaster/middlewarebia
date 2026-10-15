@@ -825,8 +825,82 @@ class SyncService {
      * Vizor: Compara catálogo do eGestor com a Nuvemshop.
      * Retorna produtos do eGestor indicando quais já estão na Nuvemshop e quais ainda não foram enviados.
      */
-    public function getEGestorVsNuvemProducts(int $page = 1, string $filter = '', string|bool $statusFilter = 'missing', string $stockFilter = 'all'): array {
+    public function getEGestorVsNuvemProducts(int $page = 1, string $filter = '', string|bool $statusFilter = 'all', string $stockFilter = 'all'): array {
         try {
+            $db = Database::getConnection();
+
+            // Normaliza statusFilter
+            if (is_bool($statusFilter)) {
+                $statusFilter = $statusFilter ? 'missing' : 'all';
+            }
+
+            // CASO 1: Filtrar apenas os produtos JÁ CADASTRADOS na Nuvemshop
+            // Consulta diretamente a base local de mapeamentos (instantâneo e com paginação real sobre os produtos na Nuvemshop)
+            if ($statusFilter === 'in_nuvem') {
+                $where = ["nuvemshop_product_id IS NOT NULL AND nuvemshop_product_id != '' AND (status != 'removed_from_nuvem' OR status IS NULL)"];
+                $queryParams = [];
+
+                if ($filter !== '') {
+                    $where[] = "(name LIKE :q OR sku LIKE :q OR barcode LIKE :q OR egestor_id LIKE :q)";
+                    $queryParams[':q'] = "%{$filter}%";
+                }
+
+                if ($stockFilter === 'has_stock') {
+                    $where[] = "(stock_nuvemshop > 0 OR stock_egestor > 0)";
+                } elseif ($stockFilter === 'zero_stock') {
+                    $where[] = "(stock_nuvemshop <= 0 AND stock_egestor <= 0)";
+                } elseif ($stockFilter === 'low_stock') {
+                    $where[] = "((stock_nuvemshop > 0 AND stock_nuvemshop <= 3) OR (stock_egestor > 0 AND stock_egestor <= 3))";
+                }
+
+                $whereSql = implode(' AND ', $where);
+
+                $stmtCount = $db->prepare("SELECT COUNT(*) FROM product_mappings WHERE {$whereSql}");
+                foreach ($queryParams as $k => $v) {
+                    $stmtCount->bindValue($k, $v);
+                }
+                $stmtCount->execute();
+                $totalNuvem = (int)$stmtCount->fetchColumn();
+
+                $perPage = 50;
+                $lastPage = max(1, (int)ceil($totalNuvem / $perPage));
+                $offset = ($page - 1) * $perPage;
+
+                $stmt = $db->prepare("SELECT * FROM product_mappings WHERE {$whereSql} ORDER BY id DESC LIMIT :limit OFFSET :offset");
+                foreach ($queryParams as $k => $v) {
+                    $stmt->bindValue($k, $v);
+                }
+                $stmt->bindValue(':limit', $perPage, \PDO::PARAM_INT);
+                $stmt->bindValue(':offset', $offset, \PDO::PARAM_INT);
+                $stmt->execute();
+                $rows = $stmt->fetchAll();
+
+                $items = [];
+                foreach ($rows as $r) {
+                    $items[] = [
+                        'codigo' => $r['egestor_id'] ?: $r['sku'],
+                        'sku' => $r['sku'] ?: $r['egestor_id'],
+                        'nome' => $r['name'],
+                        'barcode' => $r['barcode'] ?: '',
+                        'estoque' => (float)($r['stock_egestor'] ?? 0),
+                        'preco' => (float)($r['price'] ?? 0),
+                        'in_nuvemshop' => true,
+                        'nuvemshop_product_id' => $r['nuvemshop_product_id'],
+                        'nuvemshop_variant_id' => $r['nuvemshop_variant_id'],
+                        'stock_nuvemshop' => (float)($r['stock_nuvemshop'] ?? 0)
+                    ];
+                }
+
+                return [
+                    'success' => true,
+                    'page' => $page,
+                    'last_page' => $lastPage,
+                    'total_egestor' => $totalNuvem,
+                    'items' => $items
+                ];
+            }
+
+            // CASO 2: Catálogo do eGestor ('all' ou 'missing')
             $params = [];
             if ($filter !== '') {
                 $params['filtro'] = $filter;
@@ -843,13 +917,6 @@ class SyncService {
             $rawProducts = $res['data']['data'] ?? [];
             $totalEGestor = (int)($res['data']['total'] ?? 0);
             $lastPage = (int)($res['data']['last_page'] ?? 1);
-
-            $db = Database::getConnection();
-
-            // Normaliza statusFilter
-            if (is_bool($statusFilter)) {
-                $statusFilter = $statusFilter ? 'missing' : 'all';
-            }
 
             // Indexa produtos retornados para checar existência no banco local de forma rápida
             $codigos = [];

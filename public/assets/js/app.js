@@ -272,11 +272,13 @@ async function loadProductsList(page = 1) {
             else if (stock === 'low_stock') filterDesc.push('estoque baixo (1 a 3)');
 
             const filterStr = filterDesc.length ? ` &bull; <span style="color: #2563eb; font-weight: 600;">(${filterDesc.join(', ')})</span>` : '';
-            summaryText.innerHTML = `Total no eGestor: <strong>${totalEGestor.toLocaleString()}</strong> itens &bull; Exibindo página <strong>${page}</strong> de <strong>${lastPage}</strong>${filterStr}`;
+            const scopeLabel = status === 'in_nuvem' ? 'Total na Nuvemshop' : 'Total no eGestor';
+            summaryText.innerHTML = `${scopeLabel}: <strong>${totalEGestor.toLocaleString()}</strong> produtos &bull; Exibindo página <strong>${page}</strong> de <strong>${lastPage}</strong>${filterStr}`;
         }
 
         if (pagInfo) {
-            pagInfo.textContent = `Página ${page} de ${lastPage} (${totalEGestor.toLocaleString()} produtos cadastrados no eGestor)`;
+            const scopeInfo = status === 'in_nuvem' ? 'produtos sincronizados na Nuvemshop' : 'produtos cadastrados no eGestor';
+            pagInfo.textContent = `Página ${page} de ${lastPage} (${totalEGestor.toLocaleString()} ${scopeInfo})`;
         }
 
         const renderPaginationBtns = () => {
