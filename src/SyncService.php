@@ -1483,7 +1483,6 @@ class SyncService {
                 'numero' => $numero,
                 'complemento' => $complemento,
                 'bairro' => $bairro,
-                'cidade' => $cidade,
                 'uf' => $uf,
                 'cep' => $cep,
                 'obs' => "Cadastrado via integração Nuvemshop (Pedido #{$orderId})"
@@ -1504,6 +1503,9 @@ class SyncService {
         // 3. Montagem dos itens da venda para o eGestor
         $saleProducts = [];
         $products = $order['products'] ?? [];
+        $totalItems = count($products);
+        $totalDiscount = (float)($order['discount'] ?? 0);
+        $itemDiscount = ($totalItems > 0 && $totalDiscount > 0) ? round($totalDiscount / $totalItems, 2) : 0;
 
         foreach ($products as $item) {
             $sku = trim((string)($item['sku'] ?? ''));
@@ -1544,7 +1546,9 @@ class SyncService {
                 $saleProducts[] = [
                     'codProduto' => (int)$egestorId,
                     'preco' => $price,
-                    'quant' => $qty
+                    'quant' => $qty,
+                    'vDesc' => $itemDiscount,
+                    'obs' => "Pedido Nuvemshop #{$orderId}"
                 ];
             }
         }
@@ -1567,16 +1571,15 @@ class SyncService {
         // 5. Se o cliente foi identificado e há produtos mapeados, lança a venda no eGestor
         if ($contactId && !empty($saleProducts)) {
             $freight = (float)($order['shipping_cost_customer'] ?? 0);
-            $discount = (float)($order['discount'] ?? 0);
             $dtVenda = date('Y-m-d', strtotime($order['created_at'] ?? 'now'));
 
             $salePayload = [
                 'codContato' => $contactId,
+                'codVendedor' => 1,
                 'dtVenda' => $dtVenda,
                 'produtos' => $saleProducts,
                 'valorFrete' => $freight,
-                'valorDesconto' => $discount,
-                'obs' => "Pedido Nuvemshop #{$orderId} - Cliente: {$customerName} (CPF: " . ($cleanCpf ?: 'Não inf.') . ")"
+                'tags' => ['Nuvemshop']
             ];
 
             $saleRes = $this->egestor->createSale($salePayload);

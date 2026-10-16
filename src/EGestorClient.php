@@ -142,6 +142,14 @@ class EGestorClient {
         $decoded = json_decode($response, true);
         if ($httpCode >= 400) {
             $msg = $decoded['errMsg'] ?? $decoded['message'] ?? "HTTP {$httpCode}";
+            if (!empty($decoded['errFields'])) {
+                if (is_array($decoded['errFields'])) {
+                    $fieldsStr = json_encode($decoded['errFields'], JSON_UNESCAPED_UNICODE);
+                    $msg .= " (Campos: {$fieldsStr})";
+                } else {
+                    $msg .= " (Campos: {$decoded['errFields']})";
+                }
+            }
             return [
                 'success' => false,
                 'status' => $httpCode,
@@ -312,7 +320,6 @@ class EGestorClient {
      */
     public function createContact(array $data): array {
         $cleanCpf = preg_replace('/\D/', '', (string)($data['cpfcnpj'] ?? $data['cpf_cnpj'] ?? $data['identification'] ?? ''));
-        $isPj = strlen($cleanCpf) > 11;
         $nome = trim((string)($data['nome'] ?? $data['name'] ?? 'Cliente Nuvemshop'));
 
         $emails = [];
@@ -331,33 +338,38 @@ class EGestorClient {
             $fones = $data['fones'];
         }
 
-        $cep = preg_replace('/\D/', '', (string)($data['cep'] ?? $data['zipcode'] ?? '0'));
+        $cep = preg_replace('/\D/', '', (string)($data['cep'] ?? $data['zipcode'] ?? ''));
         $logradouro = trim((string)($data['logradouro'] ?? $data['endereco'] ?? $data['address'] ?? ''));
         $numero = trim((string)($data['numero'] ?? $data['number'] ?? 'S/N'));
         $complemento = trim((string)($data['complemento'] ?? $data['floor'] ?? ''));
         $bairro = trim((string)($data['bairro'] ?? $data['locality'] ?? ''));
-        $cidade = trim((string)($data['cidade'] ?? $data['city'] ?? ''));
         $uf = strtoupper(trim((string)($data['uf'] ?? $data['state'] ?? '')));
 
         $payload = [
             'nome' => $nome,
-            'fantasia' => trim((string)($data['fantasia'] ?? '')),
             'tipo' => ['cliente'],
             'cpfcnpj' => $cleanCpf,
             'clienteFinal' => true,
             'indicadorIE' => 9, // 9 = Não Contribuinte ICMS
             'emails' => $emails,
             'fones' => $fones,
-            'cep' => (int)$cep,
             'logradouro' => $logradouro,
             'numero' => $numero,
             'complemento' => $complemento,
             'bairro' => $bairro,
-            'cidade' => $cidade,
+            // NOTA: 'cidade' não pode ser enviado para a API do eGestor em POST /contatos pois é preenchido automaticamente via CEP e gera 'Campo cidade é somente para leitura.'
             'uf' => $uf,
             'tags' => ['Nuvemshop'],
             'obs' => trim((string)($data['obs'] ?? 'Cadastrado automaticamente via Nuvemshop'))
         ];
+
+        if (!empty($cep) && (int)$cep > 0) {
+            $payload['cep'] = (int)$cep;
+        }
+
+        if (!empty($data['fantasia'])) {
+            $payload['fantasia'] = trim((string)$data['fantasia']);
+        }
 
         Logger::info("Criando contato no eGestor para cliente '{$nome}' (CPF/CNPJ: {$cleanCpf})...", ['payload' => $payload]);
         return $this->request('POST', '/contatos', $payload);
@@ -375,20 +387,48 @@ class EGestorClient {
      * Registra uma Venda de produtos no eGestor (preparada para emissão de NF-e)
      */
     public function createSale(array $data): array {
-        $produtos = $data['produtos'] ?? $data['itens'] ?? [];
-        if (empty($produtos)) {
+        $rawProdutos = $data['produtos'] ?? $data['itens'] ?? [];
+        if (empty($rawProdutos)) {
             return ['success' => false, 'error' => 'Nenhum produto informado para a venda'];
         }
 
+        $globalObs = trim((string)($data['obs'] ?? ''));
+        $globalDiscount = (float)($data['valorDesconto'] ?? 0);
+        $totalItems = count($rawProdutos);
+        $itemDiscountFallback = ($totalItems > 0 && $globalDiscount > 0) ? round($globalDiscount / $totalItems, 2) : 0;
+
+        $produtos = [];
+        foreach ($rawProdutos as $p) {
+            $codProduto = (int)($p['codProduto'] ?? $p['codigo'] ?? $p['id'] ?? 0);
+            if ($codProduto <= 0) continue;
+
+            $item = [
+                'codProduto' => $codProduto,
+                'preco' => (float)($p['preco'] ?? $p['price'] ?? 0),
+                'quant' => (float)($p['quant'] ?? $p['quantity'] ?? 1),
+                'vDesc' => (float)($p['vDesc'] ?? $itemDiscountFallback)
+            ];
+
+            $itemObs = trim((string)($p['obs'] ?? $globalObs));
+            if ($itemObs !== '') {
+                $item['obs'] = $itemObs;
+            }
+
+            $produtos[] = $item;
+        }
+
+        if (empty($produtos)) {
+            return ['success' => false, 'error' => 'Nenhum produto válido mapeado para envio ao eGestor'];
+        }
+
+        // A API v1 do eGestor exige 'codVendedor' e NÃO aceita 'obs' ou 'valorDesconto' na raiz da venda
         $payload = [
             'codContato' => (int)($data['codContato'] ?? 0),
+            'codVendedor' => (int)($data['codVendedor'] ?? 1),
             'dtVenda' => $data['dtVenda'] ?? date('Y-m-d'),
             'produtos' => $produtos,
             'valorFrete' => (float)($data['valorFrete'] ?? 0),
-            'valorDesconto' => (float)($data['valorDesconto'] ?? 0),
-            'obs' => trim((string)($data['obs'] ?? 'Pedido importado da Nuvemshop')),
-            'tags' => ['Nuvemshop'],
-            'clienteFinal' => true
+            'tags' => ['Nuvemshop']
         ];
 
         Logger::info("Lançando Venda no eGestor para contato ID {$payload['codContato']} com " . count($produtos) . " item(ns)...", ['payload' => $payload]);
@@ -396,9 +436,25 @@ class EGestorClient {
     }
 
     /**
+     * Exclui um contato no eGestor
+     */
+    public function deleteContact(int|string $codContato): array {
+        Logger::info("Excluindo contato {$codContato} no eGestor...");
+        return $this->request('DELETE', "/contatos/{$codContato}");
+    }
+
+    /**
      * Consulta detalhes de uma venda no eGestor
      */
     public function getSale(int|string $codVenda): array {
         return $this->request('GET', "/vendas/{$codVenda}");
+    }
+
+    /**
+     * Exclui uma venda no eGestor
+     */
+    public function deleteSale(int|string $codVenda): array {
+        Logger::info("Excluindo venda {$codVenda} no eGestor...");
+        return $this->request('DELETE', "/vendas/{$codVenda}");
     }
 }
