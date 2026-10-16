@@ -22,6 +22,10 @@ const pageHeaders = {
         title: 'Lista de Produtos',
         desc: 'Catálogo do eGestor integrado à Nuvemshop com controle unificado de estoques'
     },
+    'tab-pedidos': {
+        title: 'Vendas & Emissão no eGestor (NF-e)',
+        desc: 'Pedidos realizados na Nuvemshop com clientes cadastrados e vendas prontas para emissão de NF-e no eGestor'
+    },
     'tab-novo-produto': {
         title: 'Cadastrar Produto',
         desc: 'Cadastro simultâneo no eGestor e anúncio com grade unificada na Nuvemshop'
@@ -81,6 +85,8 @@ function switchTab(targetId) {
 
     if (targetId === 'tab-lista-produtos') {
         loadProductsList(window.currentProductsPage || 1);
+    } else if (targetId === 'tab-pedidos') {
+        loadOrdersList();
     } else if (targetId === 'tab-novo-produto') {
         generateVariantsTable();
     } else if (targetId === 'tab-logs') {
@@ -1099,5 +1105,185 @@ function exportToCsvFallback(rows, filename) {
     link.click();
     document.body.removeChild(link);
 }
+
+// ========================================================
+// VENDAS & EMISSÃO DE NF-E NO EGESTOR (NUVEMSHOP ⇄ EGESTOR)
+// ========================================================
+async function loadOrdersList() {
+    const tbody = document.getElementById('orders-list-tbody');
+    if (!tbody) return;
+
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-dim); padding: 30px;">Consultando vendas e pedidos sincronizados...</td></tr>';
+
+    try {
+        const res = await fetch('api.php?action=orders');
+        const data = await res.json();
+
+        if (!data.success) {
+            tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--danger); padding: 30px;">Erro ao carregar pedidos: ${escapeHtml(data.error || 'Falha')}</td></tr>`;
+            return;
+        }
+
+        const orders = data.orders || [];
+        if (orders.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="9" style="text-align: center; color: var(--text-muted); padding: 45px 20px;">
+                        <div style="font-size: 32px; margin-bottom: 10px;">🧾</div>
+                        <strong style="font-size: 14px; color: var(--text-main);">Nenhuma venda registrada ainda</strong>
+                        <p style="font-size: 12px; color: var(--text-dim); margin-top: 6px; max-width: 500px; margin-left: auto; margin-right: auto; line-height: 1.5;">
+                            Quando um cliente comprar na Nuvemshop, o pedido aparecerá aqui automaticamente. O middleware cadastra o cliente (com CPF/CNPJ e endereço completo) e lança a Venda no eGestor pronta para emissão de NF-e.
+                        </p>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        tbody.innerHTML = orders.map(o => {
+            const cpfDisplay = o.customer_cpf_cnpj ? formatCpfCnpj(o.customer_cpf_cnpj) : '<span style="color: var(--text-dim);">Não informado</span>';
+            const totalVal = parseFloat(o.order_total || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+            
+            let statusBadge = '';
+            if (o.status === 'sale_registered') {
+                statusBadge = '<span class="status-badge online"><span class="status-dot"></span> Venda no eGestor (Pronta para NF-e)</span>';
+            } else if (o.status === 'error') {
+                statusBadge = `<span class="status-badge offline" title="${escapeHtml(o.details || '')}"><span class="status-dot"></span> Erro no eGestor</span>`;
+            } else {
+                statusBadge = '<span class="status-badge warning"><span class="status-dot"></span> Pendente</span>';
+            }
+
+            const dt = o.created_at ? new Date(o.created_at).toLocaleString('pt-BR') : '-';
+
+            return `
+                <tr>
+                    <td><strong>#${escapeHtml(o.nuvemshop_order_id)}</strong></td>
+                    <td>
+                        <div style="font-weight: 600; color: var(--text-main);">${escapeHtml(o.customer_name || 'Cliente')}</div>
+                        <div style="font-size: 11px; color: var(--text-dim);">${escapeHtml(o.customer_email || '')}</div>
+                    </td>
+                    <td><span style="font-family: var(--font-mono); font-size: 12px;">${cpfDisplay}</span></td>
+                    <td><strong>${totalVal}</strong></td>
+                    <td>
+                        ${o.egestor_contact_id 
+                            ? `<span style="font-family: var(--font-mono); font-size: 12px; color: #2563eb; background: #eff6ff; padding: 2px 6px; border-radius: 4px;">#${o.egestor_contact_id}</span>` 
+                            : '<span style="color: var(--text-dim);">-</span>'}
+                    </td>
+                    <td>
+                        ${o.egestor_sale_id 
+                            ? `<span style="font-family: var(--font-mono); font-size: 12px; font-weight: 700; color: #059669; background: #ecfdf5; padding: 2px 6px; border-radius: 4px;">#${o.egestor_sale_id}</span>` 
+                            : '<span style="color: var(--text-dim);">-</span>'}
+                    </td>
+                    <td>${statusBadge}</td>
+                    <td style="font-size: 12px; color: var(--text-muted);">${dt}</td>
+                    <td style="text-align: right;">
+                        <button class="btn btn-secondary btn-sm" onclick="reSyncOrder('${escapeHtml(o.nuvemshop_order_id)}')" title="Reenviar dados e reprocessar venda no eGestor">
+                            🔄 Reenviar
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+    } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--danger); padding: 30px;">Falha de comunicação ao carregar pedidos.</td></tr>';
+    }
+}
+
+function formatCpfCnpj(v) {
+    v = (v || '').replace(/\D/g, '');
+    if (v.length === 11) {
+        return v.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+    } else if (v.length === 14) {
+        return v.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
+    }
+    return v;
+}
+
+function openManualOrderSyncModal() {
+    const m = document.getElementById('manual-order-modal');
+    if (m) {
+        const inp = document.getElementById('manual-order-id');
+        if (inp) inp.value = '';
+        m.classList.add('active');
+        if (inp) inp.focus();
+    }
+}
+
+function closeManualOrderSyncModal() {
+    const m = document.getElementById('manual-order-modal');
+    if (m) m.classList.remove('active');
+}
+
+async function submitManualOrderSync(e) {
+    e.preventDefault();
+    const inp = document.getElementById('manual-order-id');
+    const orderId = inp ? inp.value.trim() : '';
+    if (!orderId) {
+        showToast('Informe o ID do pedido na Nuvemshop.', 'warning');
+        return;
+    }
+
+    const btn = document.getElementById('btn-manual-order-submit');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Enviando ao eGestor...';
+    }
+
+    showToast(`Processando pedido #${orderId} no eGestor...`, 'info');
+    try {
+        const formData = new FormData();
+        formData.append('order_id', orderId);
+
+        const res = await fetch('api.php?action=sync_order', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            showToast(data.message || 'Venda lançada no eGestor com sucesso!', 'success');
+            closeManualOrderSyncModal();
+            loadOrdersList();
+            loadLogs();
+        } else {
+            showToast('Erro ao sincronizar pedido: ' + (data.error || 'Falha'), 'error');
+        }
+    } catch (err) {
+        showToast('Erro de comunicação ao enviar pedido.', 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '🚀 Enviar para eGestor';
+        }
+    }
+}
+
+async function reSyncOrder(orderId) {
+    if (!confirm(`Deseja reprocessar o pedido #${orderId} no eGestor?`)) return;
+    
+    showToast(`Reprocessando pedido #${orderId} no eGestor...`, 'info');
+    try {
+        const formData = new FormData();
+        formData.append('order_id', orderId);
+
+        const res = await fetch('api.php?action=sync_order', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            showToast(data.message || 'Pedido sincronizado com sucesso no eGestor!', 'success');
+            loadOrdersList();
+            loadLogs();
+        } else {
+            showToast('Erro: ' + (data.error || 'Falha ao sincronizar'), 'error');
+        }
+    } catch (err) {
+        showToast('Erro de conexão ao reenviar pedido.', 'error');
+    }
+}
+
 
 

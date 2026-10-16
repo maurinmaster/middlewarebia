@@ -263,4 +263,142 @@ class EGestorClient {
         }
         return null;
     }
+
+    /**
+     * Busca contato no eGestor por CPF ou CNPJ
+     */
+    public function findContactByCpf(string $cpfCnpj): ?array {
+        $clean = preg_replace('/\D/', '', $cpfCnpj);
+        if (empty($clean)) return null;
+
+        $res = $this->request('GET', '/contatos?filtro=' . urlencode($clean));
+        if ($res['success'] && !empty($res['data']['data'])) {
+            foreach ($res['data']['data'] as $c) {
+                $contactCpf = preg_replace('/\D/', '', (string)($c['cpfcnpj'] ?? ''));
+                if ($contactCpf === $clean) {
+                    return $c;
+                }
+            }
+            // Se o filtro retornou registros, verifica o primeiro
+            $first = $res['data']['data'][0] ?? null;
+            if ($first && preg_replace('/\D/', '', (string)($first['cpfcnpj'] ?? '')) === $clean) {
+                return $first;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Busca contato no eGestor por Nome exato ou aproximado
+     */
+    public function findContactByName(string $name): ?array {
+        $name = trim($name);
+        if ($name === '') return null;
+
+        $res = $this->request('GET', '/contatos?filtro=' . urlencode($name));
+        if ($res['success'] && !empty($res['data']['data'])) {
+            foreach ($res['data']['data'] as $c) {
+                if (strcasecmp(trim($c['nome'] ?? ''), $name) === 0) {
+                    return $c;
+                }
+            }
+            return $res['data']['data'][0] ?? null;
+        }
+        return null;
+    }
+
+    /**
+     * Cria um novo contato/cliente no eGestor com dados fiscais completos para NF-e
+     */
+    public function createContact(array $data): array {
+        $cleanCpf = preg_replace('/\D/', '', (string)($data['cpfcnpj'] ?? $data['cpf_cnpj'] ?? $data['identification'] ?? ''));
+        $isPj = strlen($cleanCpf) > 11;
+        $nome = trim((string)($data['nome'] ?? $data['name'] ?? 'Cliente Nuvemshop'));
+
+        $emails = [];
+        if (!empty($data['email'])) {
+            $emails[] = trim((string)$data['email']);
+        } elseif (!empty($data['emails']) && is_array($data['emails'])) {
+            $emails = array_map('trim', $data['emails']);
+        }
+
+        $fones = [];
+        $rawPhone = $data['phone'] ?? $data['telefone'] ?? $data['celular'] ?? null;
+        if (!empty($rawPhone)) {
+            $cleanPhone = preg_replace('/\D/', '', (string)$rawPhone);
+            if ($cleanPhone !== '') $fones[] = $cleanPhone;
+        } elseif (!empty($data['fones']) && is_array($data['fones'])) {
+            $fones = $data['fones'];
+        }
+
+        $cep = preg_replace('/\D/', '', (string)($data['cep'] ?? $data['zipcode'] ?? '0'));
+        $logradouro = trim((string)($data['logradouro'] ?? $data['endereco'] ?? $data['address'] ?? ''));
+        $numero = trim((string)($data['numero'] ?? $data['number'] ?? 'S/N'));
+        $complemento = trim((string)($data['complemento'] ?? $data['floor'] ?? ''));
+        $bairro = trim((string)($data['bairro'] ?? $data['locality'] ?? ''));
+        $cidade = trim((string)($data['cidade'] ?? $data['city'] ?? ''));
+        $uf = strtoupper(trim((string)($data['uf'] ?? $data['state'] ?? '')));
+
+        $payload = [
+            'nome' => $nome,
+            'fantasia' => trim((string)($data['fantasia'] ?? '')),
+            'tipo' => ['cliente'],
+            'cpfcnpj' => $cleanCpf,
+            'clienteFinal' => true,
+            'indicadorIE' => 9, // 9 = Não Contribuinte ICMS
+            'emails' => $emails,
+            'fones' => $fones,
+            'cep' => (int)$cep,
+            'logradouro' => $logradouro,
+            'numero' => $numero,
+            'complemento' => $complemento,
+            'bairro' => $bairro,
+            'cidade' => $cidade,
+            'uf' => $uf,
+            'tags' => ['Nuvemshop'],
+            'obs' => trim((string)($data['obs'] ?? 'Cadastrado automaticamente via Nuvemshop'))
+        ];
+
+        Logger::info("Criando contato no eGestor para cliente '{$nome}' (CPF/CNPJ: {$cleanCpf})...", ['payload' => $payload]);
+        return $this->request('POST', '/contatos', $payload);
+    }
+
+    /**
+     * Atualiza dados de um contato no eGestor
+     */
+    public function updateContact(int|string $codContato, array $data): array {
+        Logger::info("Atualizando contato {$codContato} no eGestor...", $data);
+        return $this->request('PUT', "/contatos/{$codContato}", $data);
+    }
+
+    /**
+     * Registra uma Venda de produtos no eGestor (preparada para emissão de NF-e)
+     */
+    public function createSale(array $data): array {
+        $produtos = $data['produtos'] ?? $data['itens'] ?? [];
+        if (empty($produtos)) {
+            return ['success' => false, 'error' => 'Nenhum produto informado para a venda'];
+        }
+
+        $payload = [
+            'codContato' => (int)($data['codContato'] ?? 0),
+            'dtVenda' => $data['dtVenda'] ?? date('Y-m-d'),
+            'produtos' => $produtos,
+            'valorFrete' => (float)($data['valorFrete'] ?? 0),
+            'valorDesconto' => (float)($data['valorDesconto'] ?? 0),
+            'obs' => trim((string)($data['obs'] ?? 'Pedido importado da Nuvemshop')),
+            'tags' => ['Nuvemshop'],
+            'clienteFinal' => true
+        ];
+
+        Logger::info("Lançando Venda no eGestor para contato ID {$payload['codContato']} com " . count($produtos) . " item(ns)...", ['payload' => $payload]);
+        return $this->request('POST', '/vendas', $payload);
+    }
+
+    /**
+     * Consulta detalhes de uma venda no eGestor
+     */
+    public function getSale(int|string $codVenda): array {
+        return $this->request('GET', "/vendas/{$codVenda}");
+    }
 }

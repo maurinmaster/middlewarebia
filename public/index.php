@@ -59,6 +59,10 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
         <span class="nav-icon">📦</span>
         <span>Lista de Produtos</span>
       </button>
+      <button class="nav-link-btn" data-tab="tab-pedidos">
+        <span class="nav-icon">🧾</span>
+        <span>Vendas &amp; NF-e</span>
+      </button>
       <button class="nav-link-btn" data-tab="tab-novo-produto">
         <span class="nav-icon">➕</span>
         <span>Novo Produto</span>
@@ -224,6 +228,59 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
         <div class="table-pagination-footer">
           <span id="pagination-bottom-info">Página 1</span>
           <div id="pagination-bottom-btns" class="pagination-buttons"></div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ========================================================
+         ABA: VENDAS & NF-E (NUVEMSHOP ⇄ EGESTOR)
+         ======================================================== -->
+    <section id="tab-pedidos" class="tab-content">
+      <div class="table-container">
+        
+        <div class="table-header-bar">
+          <div>
+            <h3 style="font-size: 15px; font-weight: 700; color: var(--text-main);">🧾 Vendas da Nuvemshop &amp; Emissão no eGestor</h3>
+            <p style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+              Pedidos recebidos na Nuvemshop com clientes cadastrados e vendas prontas para emissão de NF-e no eGestor (Opção A).
+            </p>
+          </div>
+
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <button class="btn btn-secondary btn-sm" onclick="loadOrdersList()" title="Atualizar listagem de pedidos">
+              🔄 Atualizar Pedidos
+            </button>
+            <button class="btn btn-primary btn-sm" onclick="openManualOrderSyncModal()" title="Importar pedido específico da Nuvemshop manualmente">
+              ➕ Importar Pedido
+            </button>
+          </div>
+        </div>
+
+        <!-- Tabela de Pedidos -->
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 140px;">Pedido Nuvem #</th>
+                <th>Cliente</th>
+                <th style="width: 140px;">CPF / CNPJ</th>
+                <th style="width: 120px;">Total (R$)</th>
+                <th style="width: 110px;">ID Contato</th>
+                <th style="width: 110px;">ID Venda</th>
+                <th style="width: 220px;">Status no eGestor</th>
+                <th style="width: 150px;">Data / Hora</th>
+                <th style="text-align: right; width: 140px;">Ações</th>
+              </tr>
+            </thead>
+            <tbody id="orders-list-tbody">
+              <tr>
+                <td colspan="9" style="text-align: center; color: var(--text-dim); padding: 30px;">
+                  Carregando pedidos sincronizados...
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
       </div>
@@ -659,6 +716,29 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
         📥 Baixar Planilha Excel (.xlsx)
       </button>
     </div>
+  </div>
+</div>
+
+<!-- Modal Importação Manual de Pedido Nuvemshop -->
+<div id="manual-order-modal" class="modal-overlay">
+  <div class="modal" style="max-width: 480px;">
+    <div class="modal-header">
+      <h3>🧾 Importar Pedido para o eGestor (NF-e)</h3>
+      <button class="modal-close" onclick="closeManualOrderSyncModal()">&times;</button>
+    </div>
+    <form onsubmit="submitManualOrderSync(event)">
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px; line-height: 1.5;">
+        Informe o <strong>ID do Pedido</strong> na Nuvemshop para cadastrar o cliente (com CPF/CNPJ e endereço) e lançar a Venda no eGestor pronta para emissão de NF-e.
+      </p>
+      <div class="form-group">
+        <label for="manual-order-id">ID do Pedido na Nuvemshop *:</label>
+        <input type="text" id="manual-order-id" class="form-control" required placeholder="Ex: 123456789">
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px;">
+        <button type="button" class="btn btn-secondary" onclick="closeManualOrderSyncModal()">Cancelar</button>
+        <button type="submit" class="btn btn-primary" id="btn-manual-order-submit">🚀 Enviar para eGestor</button>
+      </div>
+    </form>
   </div>
 </div>
 

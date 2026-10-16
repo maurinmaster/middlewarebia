@@ -390,7 +390,22 @@ class SyncService {
                 }
             }
 
-            return ['success' => true, 'synced_items' => $syncedItems, 'order_id' => $orderId];
+            // Se for venda confirmada (e não cancelamento), cadastra o cliente e lança a Venda no eGestor para emissão de NF-e
+            $saleResult = null;
+            if (!$isCancelled) {
+                try {
+                    $saleResult = $this->syncOrderCustomerAndSaleToEGestor($payload, $orderId);
+                } catch (\Throwable $errSale) {
+                    Logger::error("Erro ao registrar cliente/venda no eGestor para pedido #{$orderId}: " . $errSale->getMessage());
+                }
+            }
+
+            return [
+                'success' => true,
+                'synced_items' => $syncedItems,
+                'order_id' => $orderId,
+                'sale_sync' => $saleResult
+            ];
         }
 
         // 2. Tratamento de alteração de produto na Nuvemshop (NUNCA altera o eGestor)
@@ -1399,5 +1414,242 @@ class SyncService {
             'nuvemshop_product_id' => $createdProductId,
             'variants_count' => $mappedCount
         ];
+    }
+
+    /**
+     * Coleta os dados do cliente e da compra da Nuvemshop e lança no eGestor
+     * Cria ou atualiza o Contato e registra a Venda pronta para emissão de NF-e (Opção A)
+     */
+    public function syncOrderCustomerAndSaleToEGestor(array $order, string $orderId): array {
+        $db = Database::getConnection();
+
+        // 1. Extração dos dados do cliente
+        $customer = $order['customer'] ?? [];
+        $billing = $order['billing_address'] ?? [];
+        $shipping = $order['shipping_address'] ?? [];
+
+        $customerName = trim((string)($customer['name'] ?? ''));
+        if (empty($customerName)) {
+            $firstName = trim((string)($billing['first_name'] ?? $shipping['first_name'] ?? ''));
+            $lastName = trim((string)($billing['last_name'] ?? $shipping['last_name'] ?? ''));
+            $customerName = trim("{$firstName} {$lastName}");
+        }
+        if (empty($customerName)) {
+            $customerName = "Cliente Nuvemshop #{$orderId}";
+        }
+
+        $rawCpf = (string)($customer['identification'] ?? $billing['identification'] ?? $shipping['identification'] ?? '');
+        $cleanCpf = preg_replace('/\D/', '', $rawCpf);
+
+        $email = trim((string)($customer['email'] ?? $order['contact_email'] ?? ''));
+        $phone = (string)($billing['phone'] ?? $customer['phone'] ?? $shipping['phone'] ?? '');
+
+        // Endereço preferencialmente de faturamento (billing), com fallback para entrega (shipping)
+        $addrSource = !empty($billing['address']) ? $billing : $shipping;
+        $logradouro = trim((string)($addrSource['address'] ?? ''));
+        $numero = trim((string)($addrSource['number'] ?? 'S/N'));
+        $complemento = trim((string)($addrSource['floor'] ?? ''));
+        $bairro = trim((string)($addrSource['locality'] ?? ''));
+        $cidade = trim((string)($addrSource['city'] ?? ''));
+        $uf = strtoupper(trim((string)($addrSource['state'] ?? '')));
+        $cep = preg_replace('/\D/', '', (string)($addrSource['zipcode'] ?? ''));
+
+        // 2. Busca ou criação do contato no eGestor
+        $contactId = null;
+        if (!empty($cleanCpf)) {
+            $existing = $this->egestor->findContactByCpf($cleanCpf);
+            if ($existing && !empty($existing['codigo'])) {
+                $contactId = (int)$existing['codigo'];
+                Logger::info("Cliente já cadastrado no eGestor localizado por CPF ({$cleanCpf}): ID {$contactId}");
+            }
+        }
+
+        if (!$contactId && !empty($customerName)) {
+            $existingByName = $this->egestor->findContactByName($customerName);
+            if ($existingByName && !empty($existingByName['codigo'])) {
+                $contactId = (int)$existingByName['codigo'];
+                Logger::info("Cliente já cadastrado no eGestor localizado por nome ('{$customerName}'): ID {$contactId}");
+            }
+        }
+
+        if (!$contactId) {
+            Logger::info("Cadastrando novo cliente no eGestor para pedido #{$orderId}...");
+            $createContactRes = $this->egestor->createContact([
+                'nome' => $customerName,
+                'cpfcnpj' => $cleanCpf,
+                'email' => $email,
+                'phone' => $phone,
+                'logradouro' => $logradouro,
+                'numero' => $numero,
+                'complemento' => $complemento,
+                'bairro' => $bairro,
+                'cidade' => $cidade,
+                'uf' => $uf,
+                'cep' => $cep,
+                'obs' => "Cadastrado via integração Nuvemshop (Pedido #{$orderId})"
+            ]);
+
+            if ($createContactRes['success'] && !empty($createContactRes['data']['codigo'])) {
+                $contactId = (int)$createContactRes['data']['codigo'];
+                Logger::info("Novo cliente criado com sucesso no eGestor! ID: {$contactId}");
+            } elseif ($createContactRes['success'] && !empty($createContactRes['data']['id'])) {
+                $contactId = (int)$createContactRes['data']['id'];
+                Logger::info("Novo cliente criado com sucesso no eGestor! ID: {$contactId}");
+            } else {
+                $err = $createContactRes['error'] ?? 'Falha ao cadastrar cliente no eGestor';
+                Logger::error("Erro ao cadastrar cliente no eGestor: {$err}", ['body' => $createContactRes['data'] ?? []]);
+            }
+        }
+
+        // 3. Montagem dos itens da venda para o eGestor
+        $saleProducts = [];
+        $products = $order['products'] ?? [];
+
+        foreach ($products as $item) {
+            $sku = trim((string)($item['sku'] ?? ''));
+            $barcode = trim((string)($item['barcode'] ?? ''));
+            $qty = (float)($item['quantity'] ?? 1);
+            $price = (float)($item['price'] ?? 0);
+            $nuvemVarId = $item['variant_id'] ?? null;
+            $nuvemProdId = $item['product_id'] ?? null;
+            $egestorId = null;
+
+            // Busca mapeamento do item
+            if (!empty($nuvemVarId)) {
+                $stmt = $db->prepare("SELECT egestor_id FROM product_mappings WHERE nuvemshop_variant_id = ? LIMIT 1");
+                $stmt->execute([(string)$nuvemVarId]);
+                $egestorId = $stmt->fetchColumn() ?: null;
+            }
+
+            if (!$egestorId && $sku !== '') {
+                $stmt = $db->prepare("SELECT egestor_id FROM product_mappings WHERE sku != '' AND sku = ? LIMIT 1");
+                $stmt->execute([$sku]);
+                $egestorId = $stmt->fetchColumn() ?: null;
+            }
+
+            if (!$egestorId && $barcode !== '') {
+                $stmt = $db->prepare("SELECT egestor_id FROM product_mappings WHERE barcode != '' AND barcode = ? LIMIT 1");
+                $stmt->execute([$barcode]);
+                $egestorId = $stmt->fetchColumn() ?: null;
+            }
+
+            if (!$egestorId && $sku !== '') {
+                $eP = $this->egestor->findProductBySku($sku);
+                if ($eP && !empty($eP['codigo'])) {
+                    $egestorId = (string)$eP['codigo'];
+                }
+            }
+
+            if ($egestorId) {
+                $saleProducts[] = [
+                    'codProduto' => (int)$egestorId,
+                    'preco' => $price,
+                    'quant' => $qty
+                ];
+            }
+        }
+
+        // 4. Se já temos a venda registrada no banco local, evita duplicidade
+        $stmtCheck = $db->prepare("SELECT egestor_sale_id FROM orders_sync WHERE nuvemshop_order_id = ? LIMIT 1");
+        $stmtCheck->execute([$orderId]);
+        $existingSaleId = $stmtCheck->fetchColumn();
+
+        if ($existingSaleId) {
+            Logger::info("Venda para o pedido Nuvemshop #{$orderId} já foi lançada no eGestor (ID Venda #{$existingSaleId}).");
+            return [
+                'success' => true,
+                'message' => 'Venda já registrada no eGestor',
+                'sale_id' => $existingSaleId,
+                'contact_id' => $contactId
+            ];
+        }
+
+        // 5. Se o cliente foi identificado e há produtos mapeados, lança a venda no eGestor
+        if ($contactId && !empty($saleProducts)) {
+            $freight = (float)($order['shipping_cost_customer'] ?? 0);
+            $discount = (float)($order['discount'] ?? 0);
+            $dtVenda = date('Y-m-d', strtotime($order['created_at'] ?? 'now'));
+
+            $salePayload = [
+                'codContato' => $contactId,
+                'dtVenda' => $dtVenda,
+                'produtos' => $saleProducts,
+                'valorFrete' => $freight,
+                'valorDesconto' => $discount,
+                'obs' => "Pedido Nuvemshop #{$orderId} - Cliente: {$customerName} (CPF: " . ($cleanCpf ?: 'Não inf.') . ")"
+            ];
+
+            $saleRes = $this->egestor->createSale($salePayload);
+
+            if ($saleRes['success'] && (!empty($saleRes['data']['codigo']) || !empty($saleRes['data']['id']))) {
+                $saleId = (string)($saleRes['data']['codigo'] ?? $saleRes['data']['id']);
+                Logger::info("Venda #{$saleId} lançada no eGestor com sucesso para o pedido #{$orderId}!");
+
+                // Salva histórico no banco local
+                $stmtSave = $db->prepare("INSERT INTO orders_sync (nuvemshop_order_id, customer_name, customer_cpf_cnpj, customer_email, customer_phone, egestor_contact_id, egestor_sale_id, order_total, status, details)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'sale_registered', ?)
+                    ON CONFLICT(nuvemshop_order_id) DO UPDATE SET
+                        customer_name = excluded.customer_name,
+                        customer_cpf_cnpj = excluded.customer_cpf_cnpj,
+                        customer_email = excluded.customer_email,
+                        customer_phone = excluded.customer_phone,
+                        egestor_contact_id = excluded.egestor_contact_id,
+                        egestor_sale_id = excluded.egestor_sale_id,
+                        order_total = excluded.order_total,
+                        status = 'sale_registered',
+                        details = excluded.details,
+                        updated_at = CURRENT_TIMESTAMP");
+                $stmtSave->execute([
+                    $orderId,
+                    $customerName,
+                    $cleanCpf,
+                    $email,
+                    $phone,
+                    (string)$contactId,
+                    $saleId,
+                    (float)($order['total'] ?? 0),
+                    "Venda #{$saleId} criada no eGestor pronta para emissão de NF-e"
+                ]);
+
+                Database::logSync('nuvemshop', 'egestor_sale_created', (string)$orderId, "Venda #{$saleId} lançada no eGestor para cliente '{$customerName}' (CPF {$cleanCpf}). Pronta para emissão de NF-e.", 'success');
+
+                return [
+                    'success' => true,
+                    'contact_id' => $contactId,
+                    'sale_id' => $saleId,
+                    'message' => "Venda #{$saleId} registrada no eGestor com sucesso (Pronta para NF-e)"
+                ];
+            } else {
+                $err = $saleRes['error'] ?? 'Falha ao registrar venda no eGestor';
+                Logger::error("Erro ao registrar venda no eGestor para pedido #{$orderId}: {$err}", ['body' => $saleRes['data'] ?? []]);
+                
+                // Registra tentativa no banco local para acompanhamento
+                $stmtSave = $db->prepare("INSERT INTO orders_sync (nuvemshop_order_id, customer_name, customer_cpf_cnpj, customer_email, customer_phone, egestor_contact_id, order_total, status, details)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'error', ?)
+                    ON CONFLICT(nuvemshop_order_id) DO UPDATE SET
+                        status = 'error',
+                        details = excluded.details,
+                        updated_at = CURRENT_TIMESTAMP");
+                $stmtSave->execute([
+                    $orderId, $customerName, $cleanCpf, $email, $phone, (string)$contactId, (float)($order['total'] ?? 0), "Erro eGestor: {$err}"
+                ]);
+
+                return ['success' => false, 'error' => $err, 'contact_id' => $contactId];
+            }
+        } else {
+            $reason = !$contactId ? 'Cliente não cadastrado no eGestor' : 'Nenhum produto mapeado no pedido';
+            Logger::warning("Não foi possível lançar venda no eGestor para pedido #{$orderId}: {$reason}");
+            
+            $stmtSave = $db->prepare("INSERT INTO orders_sync (nuvemshop_order_id, customer_name, customer_cpf_cnpj, customer_email, customer_phone, egestor_contact_id, order_total, status, details)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+                ON CONFLICT(nuvemshop_order_id) DO UPDATE SET
+                    details = excluded.details,
+                    updated_at = CURRENT_TIMESTAMP");
+            $stmtSave->execute([
+                $orderId, $customerName, $cleanCpf, $email, $phone, (string)$contactId, (float)($order['total'] ?? 0), "Pendente: {$reason}"
+            ]);
+
+            return ['success' => false, 'error' => $reason];
+        }
     }
 }

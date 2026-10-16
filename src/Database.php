@@ -95,6 +95,27 @@ class Database {
             $stmtInit = $db->prepare("INSERT INTO users (username, password_hash, name) VALUES (?, ?, ?)");
             $stmtInit->execute([$defaultUser, $hash, 'Administrador']);
         }
+
+        // Tabela de sincronização de pedidos (Nuvemshop ⇄ eGestor Vendas / NF-e)
+        $db->exec("CREATE TABLE IF NOT EXISTS orders_sync (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nuvemshop_order_id TEXT UNIQUE NOT NULL,
+            customer_name TEXT,
+            customer_cpf_cnpj TEXT,
+            customer_email TEXT,
+            customer_phone TEXT,
+            egestor_contact_id TEXT,
+            egestor_sale_id TEXT,
+            order_total REAL DEFAULT 0,
+            status TEXT DEFAULT 'pending',
+            details TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )");
+
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_os_nuvem ON orders_sync(nuvemshop_order_id)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_os_sale ON orders_sync(egestor_sale_id)");
+        $db->exec("CREATE INDEX IF NOT EXISTS idx_os_cpf ON orders_sync(customer_cpf_cnpj)");
     }
 
     public static function logSync(string $source, string $action, string $entityId, string $details, string $status = 'success'): void {

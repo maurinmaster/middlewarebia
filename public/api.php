@@ -439,6 +439,39 @@ try {
             echo json_encode(['success' => true, 'message' => 'Senha alterada com sucesso!']);
             break;
 
+        case 'orders':
+            // Lista pedidos sincronizados entre Nuvemshop e eGestor (NF-e)
+            $limit = min(100, max(10, (int)($_GET['limit'] ?? 50)));
+            $stmt = $db->prepare("SELECT * FROM orders_sync ORDER BY id DESC LIMIT :lim");
+            $stmt->bindValue(':lim', $limit, PDO::PARAM_INT);
+            $stmt->execute();
+            $orders = $stmt->fetchAll();
+
+            echo json_encode([
+                'success' => true,
+                'count' => count($orders),
+                'orders' => $orders
+            ]);
+            break;
+
+        case 'sync_order':
+            // Sincroniza manualmente um pedido da Nuvemshop no eGestor
+            $orderId = trim($_POST['order_id'] ?? $_GET['order_id'] ?? '');
+            if ($orderId === '') {
+                echo json_encode(['success' => false, 'error' => 'ID do pedido não informado']);
+                exit;
+            }
+
+            $orderRes = $nuvemshop->getOrder($orderId);
+            if (!$orderRes['success'] || empty($orderRes['data'])) {
+                echo json_encode(['success' => false, 'error' => $orderRes['error'] ?? 'Pedido não localizado na Nuvemshop']);
+                exit;
+            }
+
+            $res = $syncService->syncOrderCustomerAndSaleToEGestor($orderRes['data'], $orderId);
+            echo json_encode($res);
+            break;
+
         default:
             echo json_encode(['success' => false, 'error' => 'Ação inválida']);
     }
