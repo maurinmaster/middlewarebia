@@ -164,6 +164,101 @@ try {
             echo json_encode($result);
             break;
 
+        case 'export_products_data':
+            // Retorna produtos mapeados no banco local para exportação em Excel
+            $statusFilter = $_GET['status'] ?? 'all';
+            $stockFilter = $_GET['stock'] ?? 'all';
+            $search = trim($_GET['filter'] ?? $_GET['search'] ?? '');
+
+            $where = ["(status != 'removed_from_nuvem' OR status IS NULL)"];
+            $params = [];
+
+            if ($search !== '') {
+                $where[] = "(name LIKE :q OR sku LIKE :q OR barcode LIKE :q OR egestor_id LIKE :q)";
+                $params[':q'] = "%{$search}%";
+            }
+
+            if ($statusFilter === 'in_nuvem') {
+                $where[] = "nuvemshop_product_id IS NOT NULL AND nuvemshop_product_id != ''";
+            } elseif ($statusFilter === 'missing') {
+                $where[] = "(nuvemshop_product_id IS NULL OR nuvemshop_product_id = '')";
+            }
+
+            if ($stockFilter === 'has_stock') {
+                $where[] = "(stock_nuvemshop > 0 OR stock_egestor > 0)";
+            } elseif ($stockFilter === 'zero_stock') {
+                $where[] = "(stock_nuvemshop <= 0 AND stock_egestor <= 0)";
+            } elseif ($stockFilter === 'low_stock') {
+                $where[] = "((stock_nuvemshop > 0 AND stock_nuvemshop <= 3) OR (stock_egestor > 0 AND stock_egestor <= 3))";
+            }
+
+            $whereSql = implode(' AND ', $where);
+            $stmt = $db->prepare("SELECT * FROM product_mappings WHERE {$whereSql} ORDER BY id DESC");
+            foreach ($params as $k => $v) {
+                $stmt->bindValue($k, $v);
+            }
+            $stmt->execute();
+            $rows = $stmt->fetchAll();
+
+            $products = [];
+            foreach ($rows as $r) {
+                $products[] = [
+                    'codigo' => $r['egestor_id'] ?: $r['sku'],
+                    'sku' => $r['sku'] ?: $r['egestor_id'],
+                    'barcode' => $r['barcode'] ?: '',
+                    'nome' => $r['name'],
+                    'estoque' => (float)($r['stock_egestor'] ?? 0),
+                    'stock_nuvemshop' => (float)($r['stock_nuvemshop'] ?? 0),
+                    'preco' => (float)($r['price'] ?? 0),
+                    'in_nuvemshop' => !empty($r['nuvemshop_product_id']),
+                    'nuvemshop_product_id' => $r['nuvemshop_product_id'] ?: '',
+                    'nuvemshop_variant_id' => $r['nuvemshop_variant_id'] ?: '',
+                    'status' => $r['status'] ?: 'synced',
+                    'last_sync_at' => $r['last_sync_at'] ?: ''
+                ];
+            }
+
+            echo json_encode([
+                'success' => true,
+                'count' => count($products),
+                'items' => $products
+            ]);
+            break;
+
+        case 'export_egestor_full_catalog':
+            // Varre as páginas do eGestor e retorna todos os produtos para a planilha
+            @set_time_limit(180);
+            $filter = trim($_GET['filter'] ?? '');
+            $statusFilter = $_GET['status'] ?? 'all';
+            $stockFilter = $_GET['stock'] ?? 'all';
+
+            $allProducts = [];
+            $currentPage = 1;
+            $maxPages = 30; // Proteção para até 1500 produtos por exportação
+
+            while ($currentPage <= $maxPages) {
+                $res = $syncService->getEGestorVsNuvemProducts($currentPage, $filter, $statusFilter, $stockFilter);
+                if (!$res['success'] || empty($res['items'])) {
+                    break;
+                }
+
+                foreach ($res['items'] as $item) {
+                    $allProducts[] = $item;
+                }
+
+                if ($currentPage >= ($res['last_page'] ?? 1)) {
+                    break;
+                }
+                $currentPage++;
+            }
+
+            echo json_encode([
+                'success' => true,
+                'count' => count($allProducts),
+                'items' => $allProducts
+            ]);
+            break;
+
         case 'export_egestor_page':
             $page = max(1, (int)($_POST['page'] ?? $_GET['page'] ?? 1));
             $onlyStock = null;

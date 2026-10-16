@@ -178,7 +178,10 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
             <button class="btn btn-primary btn-sm" onclick="loadProductsList(1)">Buscar</button>
           </div>
 
-          <div>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <button class="btn btn-excel btn-sm" onclick="openExportModal()" id="btn-export-excel" title="Extrair dados para planilha Excel (.xlsx)">
+              📊 Extrair para Excel
+            </button>
             <button class="btn btn-primary btn-sm" onclick="switchToNewProductTab()" style="background: #2563eb;">
               ➕ Cadastrar Novo
             </button>
@@ -599,8 +602,69 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
   </div>
 </div>
 
+<!-- Modal de Exportação para Excel -->
+<div id="export-excel-modal" class="modal-overlay">
+  <div class="modal" style="max-width: 520px;">
+    <div class="modal-header">
+      <h3>📊 Extrair Dados para Excel</h3>
+      <button class="modal-close" onclick="closeExportModal()">&times;</button>
+    </div>
+    
+    <div style="margin-bottom: 20px;">
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px; line-height: 1.5;">
+        Escolha quais produtos deseja exportar para a planilha do Microsoft Excel (<strong>.xlsx</strong>):
+      </p>
+
+      <div style="display: flex; flex-direction: column; gap: 10px;">
+        <label class="export-option-label" style="display: flex; align-items: flex-start; gap: 10px; padding: 12px; background: #f8fafc; border: 1px solid var(--border-color); border-radius: var(--radius-sm); cursor: pointer;">
+          <input type="radio" name="export-scope" value="visible" checked style="margin-top: 3px; cursor: pointer;">
+          <div>
+            <strong style="font-size: 13px; color: var(--text-main);">Produtos da Página Atual</strong>
+            <p style="font-size: 12px; color: var(--text-muted); margin-top: 2px;" id="export-visible-desc">
+              Exporta os produtos atualmente visíveis na tabela com os filtros aplicados.
+            </p>
+          </div>
+        </label>
+
+        <label class="export-option-label" style="display: flex; align-items: flex-start; gap: 10px; padding: 12px; background: #f8fafc; border: 1px solid var(--border-color); border-radius: var(--radius-sm); cursor: pointer;">
+          <input type="radio" name="export-scope" value="all_database" style="margin-top: 3px; cursor: pointer;">
+          <div>
+            <strong style="font-size: 13px; color: var(--text-main);">Todos os Produtos Sincronizados (Banco Local)</strong>
+            <p style="font-size: 12px; color: var(--text-muted); margin-top: 2px;" id="export-db-desc">
+              Exporta todos os produtos cadastrados e mapeados no middleware com estoques PDV e Nuvemshop, preços, SKU e status.
+            </p>
+          </div>
+        </label>
+
+        <label class="export-option-label" style="display: flex; align-items: flex-start; gap: 10px; padding: 12px; background: #f8fafc; border: 1px solid var(--border-color); border-radius: var(--radius-sm); cursor: pointer;">
+          <input type="radio" name="export-scope" value="egestor_api" style="margin-top: 3px; cursor: pointer;">
+          <div>
+            <strong style="font-size: 13px; color: var(--text-main);">Catálogo Completo do eGestor (via API)</strong>
+            <p style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
+              Consulta e extrai todos os produtos cadastrados no eGestor PDV diretamente pela API.
+            </p>
+          </div>
+        </label>
+      </div>
+
+      <div style="margin-top: 14px; padding: 10px 14px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: var(--radius-sm); display: flex; align-items: center; gap: 8px; font-size: 12px; color: #065f46;">
+        <span>📁</span>
+        <span>Gera arquivo <strong>.xlsx nativo</strong> formatado com cabeçalhos e colunas dimensionadas.</span>
+      </div>
+    </div>
+
+    <div style="display: flex; justify-content: flex-end; gap: 10px;">
+      <button type="button" class="btn btn-secondary" onclick="closeExportModal()">Cancelar</button>
+      <button type="button" class="btn btn-excel" id="btn-do-export-excel" onclick="executeExcelExport()">
+        📥 Baixar Planilha Excel (.xlsx)
+      </button>
+    </div>
+  </div>
+</div>
+
 <div class="toast-container" id="toast-container"></div>
 
+<script src="assets/js/xlsx.full.min.js?v=<?= filemtime(__DIR__ . '/assets/js/xlsx.full.min.js') ?>"></script>
 <script src="assets/js/app.js?v=<?= filemtime(__DIR__ . '/assets/js/app.js') ?>"></script>
 </body>
 </html>

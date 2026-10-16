@@ -638,6 +638,27 @@ tr:hover td {
   border-color: #cbd5e1;
 }
 
+.btn-excel {
+  background-color: #107c41;
+  color: #ffffff;
+  border: 1px solid #0e6b37;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-excel:hover {
+  background-color: #0e6b37;
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(16, 124, 65, 0.28);
+  transform: translateY(-1px);
+}
+
+.btn-excel:active {
+  transform: translateY(0);
+}
+
 .btn-success {
   background-color: var(--success);
   color: #fff;

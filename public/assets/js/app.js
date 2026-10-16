@@ -256,6 +256,7 @@ async function loadProductsList(page = 1) {
         }
 
         const items = data.items || [];
+        window.currentProductsList = items;
         const totalEGestor = data.total_egestor || 0;
         const lastPage = data.last_page || 1;
 
@@ -933,4 +934,170 @@ async function submitChangePassword(e) {
         }
     }
 }
+
+// ========================================================
+// EXPORTAÇÃO PARA EXCEL (.XLSX)
+// ========================================================
+function openExportModal() {
+    const modal = document.getElementById('export-excel-modal');
+    if (!modal) return;
+
+    const visibleItems = window.currentProductsList || [];
+    const descEl = document.getElementById('export-visible-desc');
+    if (descEl) {
+        descEl.innerHTML = `Exporta os <strong>${visibleItems.length}</strong> produtos atualmente exibidos nesta página da tabela.`;
+    }
+
+    modal.classList.add('active');
+}
+
+function closeExportModal() {
+    const modal = document.getElementById('export-excel-modal');
+    if (modal) modal.classList.remove('active');
+}
+
+async function executeExcelExport() {
+    const btn = document.getElementById('btn-do-export-excel');
+    const selectedScope = document.querySelector('input[name="export-scope"]:checked')?.value || 'visible';
+
+    const filterInput = document.getElementById('search-products-list');
+    const filter = filterInput ? filterInput.value.trim() : '';
+    const statusEl = document.getElementById('filter-status-nuvem');
+    const status = statusEl ? statusEl.value : 'all';
+    const stockEl = document.getElementById('filter-stock-level');
+    const stock = stockEl ? stockEl.value : 'all';
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Gerando Planilha...';
+    }
+
+    try {
+        let productsToExport = [];
+
+        if (selectedScope === 'visible') {
+            productsToExport = window.currentProductsList || [];
+            if (productsToExport.length === 0) {
+                showToast('Nenhum produto visível na página para exportar.', 'warning');
+                return;
+            }
+        } else if (selectedScope === 'all_database') {
+            showToast('Consultando banco de dados para exportação...', 'info');
+            const params = new URLSearchParams({
+                action: 'export_products_data',
+                filter: filter,
+                status: status,
+                stock: stock
+            });
+            const res = await fetch(`api.php?${params.toString()}`);
+            const data = await res.json();
+            if (!data.success) {
+                throw new Error(data.error || 'Falha ao buscar produtos no banco');
+            }
+            productsToExport = data.items || [];
+        } else if (selectedScope === 'egestor_api') {
+            showToast('Consultando catálogo do eGestor (pode levar alguns segundos)...', 'info');
+            const params = new URLSearchParams({
+                action: 'export_egestor_full_catalog',
+                filter: filter,
+                status: status,
+                stock: stock
+            });
+            const res = await fetch(`api.php?${params.toString()}`);
+            const data = await res.json();
+            if (!data.success) {
+                throw new Error(data.error || 'Falha ao consultar eGestor via API');
+            }
+            productsToExport = data.items || [];
+        }
+
+        if (productsToExport.length === 0) {
+            showToast('Nenhum produto encontrado para exportar com os filtros atuais.', 'warning');
+            return;
+        }
+
+        // Formata as linhas para o Excel com nomes claros em português
+        const excelRows = productsToExport.map(p => {
+            const estoquePDV = Number(p.estoque ?? 0);
+            const estoqueNuvem = p.in_nuvemshop && p.stock_nuvemshop !== null && p.stock_nuvemshop !== undefined
+                ? Number(p.stock_nuvemshop)
+                : (p.in_nuvemshop ? 0 : 'Não Cadastrado');
+
+            return {
+                'Código eGestor': p.codigo || '',
+                'SKU': p.sku || '',
+                'Código de Barras (EAN)': p.barcode || '',
+                'Descrição / Nome do Produto': p.nome || '',
+                'Estoque PDV (eGestor)': estoquePDV,
+                'Estoque Nuvemshop': estoqueNuvem,
+                'Preço Venda (R$)': Number(p.preco || 0),
+                'Status Nuvemshop': p.in_nuvemshop ? 'Cadastrado na Nuvemshop' : 'Não Enviado',
+                'ID Produto Nuvemshop': p.nuvemshop_product_id || '',
+                'ID Variação Nuvemshop': p.nuvemshop_variant_id || '',
+                'Última Sincronização': p.last_sync_at || ''
+            };
+        });
+
+        const today = new Date().toISOString().slice(0, 10);
+        const fileName = `produtos_middleware_bia_${today}.xlsx`;
+
+        // Se SheetJS (XLSX) estiver disponível
+        if (typeof XLSX !== 'undefined') {
+            const worksheet = XLSX.utils.json_to_sheet(excelRows);
+
+            // Ajusta largura automática das colunas
+            const keys = Object.keys(excelRows[0] || {});
+            worksheet['!cols'] = keys.map(key => {
+                let maxLen = key.length;
+                for (const row of excelRows) {
+                    const val = row[key];
+                    if (val !== null && val !== undefined) {
+                        maxLen = Math.max(maxLen, String(val).length);
+                    }
+                }
+                return { wch: Math.min(Math.max(maxLen + 3, 10), 65) };
+            });
+
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, 'Produtos');
+            XLSX.writeFile(workbook, fileName);
+        } else {
+            // Fallback para CSV com UTF-8 BOM compatível direto com Microsoft Excel
+            exportToCsvFallback(excelRows, `produtos_middleware_bia_${today}.csv`);
+        }
+
+        showToast(`Planilha Excel gerada com sucesso! (${productsToExport.length} produtos)`, 'success');
+        closeExportModal();
+
+    } catch (err) {
+        console.error('Erro na exportação Excel:', err);
+        showToast('Erro ao exportar planilha: ' + (err.message || 'Falha'), 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '📥 Baixar Planilha Excel (.xlsx)';
+        }
+    }
+}
+
+function exportToCsvFallback(rows, filename) {
+    if (!rows.length) return;
+    const headers = Object.keys(rows[0]);
+    const csvContent = '\uFEFF' + [
+        headers.join(';'),
+        ...rows.map(r => headers.map(h => {
+            const val = r[h] === null || r[h] === undefined ? '' : String(r[h]);
+            return `"${val.replace(/"/g, '""')}"`;
+        }).join(';'))
+    ].join('\r\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
 
