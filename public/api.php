@@ -8,12 +8,20 @@ require_once dirname(__DIR__) . '/src/Database.php';
 require_once dirname(__DIR__) . '/src/EGestorClient.php';
 require_once dirname(__DIR__) . '/src/NuvemshopClient.php';
 require_once dirname(__DIR__) . '/src/SyncService.php';
+require_once dirname(__DIR__) . '/src/Auth.php';
 
 use BiaMiddleware\Logger;
 use BiaMiddleware\Database;
 use BiaMiddleware\EGestorClient;
 use BiaMiddleware\NuvemshopClient;
 use BiaMiddleware\SyncService;
+use BiaMiddleware\Auth;
+
+if (!Auth::check()) {
+    http_response_code(401);
+    echo json_encode(['success' => false, 'error' => 'Sessão expirada ou não autenticada. Faça login novamente.']);
+    exit;
+}
 
 $config = require dirname(__DIR__) . '/config/config.php';
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
@@ -305,6 +313,35 @@ try {
 
             $res = $syncService->createUnifiedProduct($data);
             echo json_encode($res);
+            break;
+
+        case 'change_password':
+            $rawInput = json_decode(file_get_contents('php://input'), true);
+            $currentPass = $_POST['current_password'] ?? $rawInput['current_password'] ?? '';
+            $newPass = $_POST['new_password'] ?? $rawInput['new_password'] ?? '';
+            $user = Auth::user();
+
+            if (!$user || empty($user['id'])) {
+                echo json_encode(['success' => false, 'error' => 'Usuário não autenticado']);
+                exit;
+            }
+
+            if (strlen($newPass) < 4) {
+                echo json_encode(['success' => false, 'error' => 'A nova senha deve ter pelo menos 4 caracteres']);
+                exit;
+            }
+
+            $stmtU = $db->prepare("SELECT * FROM users WHERE id = ?");
+            $stmtU->execute([$user['id']]);
+            $uData = $stmtU->fetch();
+
+            if (!$uData || !password_verify($currentPass, $uData['password_hash'])) {
+                echo json_encode(['success' => false, 'error' => 'Senha atual incorreta']);
+                exit;
+            }
+
+            Auth::changePassword($user['id'], $newPass);
+            echo json_encode(['success' => true, 'message' => 'Senha alterada com sucesso!']);
             break;
 
         default:

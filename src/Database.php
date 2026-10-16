@@ -75,6 +75,26 @@ class Database {
             value TEXT,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )");
+
+        // Tabela de usuários para autenticação
+        $db->exec("CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            name TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )");
+
+        // Garante a existência do usuário admin padrão
+        $countUsers = (int)$db->query("SELECT COUNT(*) FROM users")->fetchColumn();
+        if ($countUsers === 0) {
+            $defaultUser = getenv('ADMIN_USER') ?: 'admin';
+            $defaultPass = getenv('ADMIN_PASSWORD') ?: 'bia@2026';
+            $hash = password_hash($defaultPass, PASSWORD_DEFAULT);
+            $stmtInit = $db->prepare("INSERT INTO users (username, password_hash, name) VALUES (?, ?, ?)");
+            $stmtInit->execute([$defaultUser, $hash, 'Administrador']);
+        }
     }
 
     public static function logSync(string $source, string $action, string $entityId, string $details, string $status = 'success'): void {

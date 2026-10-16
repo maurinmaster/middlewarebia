@@ -3,6 +3,12 @@
 require_once dirname(__DIR__) . '/config/config.php';
 require_once dirname(__DIR__) . '/src/Logger.php';
 require_once dirname(__DIR__) . '/src/Database.php';
+require_once dirname(__DIR__) . '/src/Auth.php';
+
+use BiaMiddleware\Auth;
+
+Auth::requireAuth();
+$currentUser = Auth::user();
 
 $config = require dirname(__DIR__) . '/config/config.php';
 
@@ -71,8 +77,22 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
       </button>
     </nav>
 
-    <!-- Rodapé: Status de Conexão das APIs -->
+    <!-- Rodapé: Usuário e Status de Conexão das APIs -->
     <div class="sidebar-footer">
+      <div class="user-profile-card">
+        <div class="user-profile-info">
+          <div class="user-avatar">👤</div>
+          <div class="user-meta">
+            <div class="user-name"><?= htmlspecialchars($currentUser['name'] ?? 'Administrador') ?></div>
+            <div class="user-role">@<?= htmlspecialchars($currentUser['username'] ?? 'admin') ?></div>
+          </div>
+        </div>
+        <a href="logout.php" class="btn-logout" title="Sair da sessão">
+          <span>Sair</span>
+          <span>🚪</span>
+        </a>
+      </div>
+
       <div class="conn-pill">
         <div class="conn-pill-header">
           <span class="conn-pill-name">Nuvemshop</span>
@@ -480,6 +500,32 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
             ⚡ Ativar Webhooks na Nuvemshop Automaticamente
           </button>
         </div>
+
+        <hr style="border: none; border-top: 1px solid var(--border-color); margin: 28px 0;">
+
+        <!-- Segurança e Alteração de Senha -->
+        <h4 style="font-size: 14px; font-weight: 700; margin-bottom: 8px;">🔒 Segurança de Acesso ao Sistema</h4>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">
+          Altere a senha de acesso da conta de administrador (<strong>@<?= htmlspecialchars($currentUser['username'] ?? 'admin') ?></strong>).
+        </p>
+
+        <form id="form-change-password" onsubmit="submitChangePassword(event)" style="background: #f8fafc; border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 18px;">
+          <div class="form-grid" style="grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px;">
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="pwd-current">Senha Atual *</label>
+              <input type="password" id="pwd-current" class="form-control" placeholder="••••••••" required autocomplete="current-password">
+            </div>
+            <div class="form-group" style="margin-bottom: 0;">
+              <label for="pwd-new">Nova Senha *</label>
+              <input type="password" id="pwd-new" class="form-control" placeholder="Mínimo 4 caracteres" required minlength="4" autocomplete="new-password">
+            </div>
+          </div>
+          <div style="display: flex; justify-content: flex-end;">
+            <button type="submit" id="btn-save-password" class="btn btn-secondary">
+              🔒 Salvar Nova Senha
+            </button>
+          </div>
+        </form>
       </div>
     </section>
 

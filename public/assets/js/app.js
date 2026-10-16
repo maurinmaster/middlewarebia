@@ -881,3 +881,56 @@ async function registerNuvemshopWebhooks() {
         showToast('Erro de comunicação ao registrar webhook na Nuvemshop', 'error');
     }
 }
+
+async function submitChangePassword(e) {
+    e.preventDefault();
+    const curEl = document.getElementById('pwd-current');
+    const newEl = document.getElementById('pwd-new');
+    const btn = document.getElementById('btn-save-password');
+
+    const currentPass = curEl ? curEl.value : '';
+    const newPass = newEl ? newEl.value : '';
+
+    if (!currentPass || !newPass) {
+        showToast('Preencha a senha atual e a nova senha.', 'warning');
+        return;
+    }
+
+    if (newPass.length < 4) {
+        showToast('A nova senha deve ter no mínimo 4 caracteres.', 'warning');
+        return;
+    }
+
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Salvando...';
+    }
+
+    try {
+        const formData = new FormData();
+        formData.append('current_password', currentPass);
+        formData.append('new_password', newPass);
+
+        const res = await fetch('api.php?action=change_password', {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            showToast(data.message || 'Senha alterada com sucesso!', 'success');
+            if (curEl) curEl.value = '';
+            if (newEl) newEl.value = '';
+        } else {
+            showToast(data.error || 'Erro ao alterar senha.', 'error');
+        }
+    } catch (err) {
+        showToast('Erro de comunicação ao atualizar senha.', 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = '🔒 Salvar Nova Senha';
+        }
+    }
+}
+
