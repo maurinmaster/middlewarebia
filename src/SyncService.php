@@ -333,6 +333,24 @@ class SyncService {
             }
 
             $syncedItems = 0;
+            $saleResult = null;
+            $saleCreatedInEGestor = false;
+
+            // Se for venda confirmada (e não cancelamento), cadastra o cliente e lança a Venda no eGestor para emissão de NF-e
+            // NOTA CRÍTICA: Ao registrar uma Venda (POST /vendas) no eGestor, o próprio eGestor já debita automaticamente
+            // o estoque de cada produto vendido! Portanto, se a venda for criada com sucesso, NUNCA devemos chamar updateProductStock
+            // novamente, pois isso causaria dupla baixa (fazendo o estoque ir de 1 para -1 em vez de ir para 0).
+            if (!$isCancelled) {
+                try {
+                    $saleResult = $this->syncOrderCustomerAndSaleToEGestor($payload, $orderId);
+                    $saleCreatedInEGestor = !empty($saleResult['success']) && !empty($saleResult['sale_id']);
+                    if ($saleCreatedInEGestor) {
+                        Logger::info("Venda oficial #{$saleResult['sale_id']} criada no eGestor com sucesso. O eGestor já efetuou a baixa automática de estoque.");
+                    }
+                } catch (\Throwable $errSale) {
+                    Logger::error("Erro ao registrar cliente/venda no eGestor para pedido #{$orderId}: " . $errSale->getMessage());
+                }
+            }
 
             foreach ($products as $item) {
                 $sku = trim((string)($item['sku'] ?? ''));
@@ -411,58 +429,61 @@ class SyncService {
                     $egestorProdRes = $this->egestor->getProduct($egestorId);
                     if ($egestorProdRes['success']) {
                         $currentStock = (float)($egestorProdRes['data']['estoque'] ?? 0);
-                        
+
                         if ($isCancelled) {
+                            // Cancelamento: estorna a quantidade devolvendo ao estoque no eGestor
                             $newStock = $currentStock + $qty;
                             $actionName = 'order_stock_restored';
                             $actionMsg = "Pedido Nuvemshop #{$orderId} CANCELADO: Estoque de {$prodName} (SKU {$sku}) devolvido de {$currentStock} para {$newStock} no eGestor";
+                            $updateRes = $this->egestor->updateProductStock($egestorId, $newStock);
+                            if ($updateRes['success']) {
+                                Logger::info($actionMsg);
+                                Database::logSync('nuvemshop', $actionName, (string)$orderId, $actionMsg, 'success');
+                                $syncedItems++;
+                            }
                         } else {
-                            $newStock = max(0, $currentStock - $qty);
-                            $actionName = 'order_stock_deducted';
-                            $actionMsg = "Venda Nuvemshop #{$orderId}: Estoque de {$prodName} (SKU {$sku}) baixado de {$currentStock} para {$newStock} no eGestor";
+                            if ($saleCreatedInEGestor) {
+                                // A Venda já foi lançada no eGestor e o eGestor já debitou automaticamente a quantidade do estoque!
+                                // NÃO chamamos updateProductStock para não debitar uma 2ª vez (evita ir de 1 para -1)!
+                                $newStock = $currentStock; // o estoque atual já reflete a dedução da venda
+                                $actionName = 'order_stock_deducted';
+                                $actionMsg = "Venda Nuvemshop #{$orderId}: Venda oficial lançada no eGestor (baixa de {$qty} un efetuada). Estoque atual no eGestor: {$newStock} un";
+                                Logger::info($actionMsg);
+                                Database::logSync('nuvemshop', $actionName, (string)$orderId, $actionMsg, 'success');
+                                $syncedItems++;
+                            } else {
+                                // Fallback: A criação da venda no eGestor falhou ou não pôde ser completada.
+                                // Baixamos o estoque manualmente para não deixar o estoque descoberto.
+                                $newStock = max(0, $currentStock - $qty);
+                                $actionName = 'order_stock_deducted';
+                                $actionMsg = "Venda Nuvemshop #{$orderId} (baixa manual): Estoque de {$prodName} (SKU {$sku}) baixado de {$currentStock} para {$newStock} no eGestor";
+                                $updateRes = $this->egestor->updateProductStock($egestorId, $newStock);
+                                if ($updateRes['success']) {
+                                    Logger::info($actionMsg);
+                                    Database::logSync('nuvemshop', $actionName, (string)$orderId, $actionMsg, 'success');
+                                    $syncedItems++;
+                                }
+                            }
                         }
 
-                        // Venda ou Cancelamento na Nuvemshop: atualiza o estoque no eGestor (PDV)
-                        $updateRes = $this->egestor->updateProductStock($egestorId, $newStock);
-                        if ($updateRes['success']) {
-                            Logger::info($actionMsg);
-                            Database::logSync('nuvemshop', $actionName, (string)$orderId, $actionMsg, 'success');
-
-                            // Atualiza mapeamento no banco local
-                            $this->saveMapping([
-                                'egestor_id' => $egestorId,
-                                'nuvemshop_product_id' => $nuvemProdId,
-                                'nuvemshop_variant_id' => $nuvemVarId,
-                                'sku' => $sku,
-                                'barcode' => $barcode,
-                                'name' => $prodName,
-                                'stock_egestor' => $newStock,
-                                'stock_nuvemshop' => $newStock,
-                                'status' => 'synced',
-                                'last_sync_direction' => 'nuvem_to_egestor'
-                            ]);
-
-                            $syncedItems++;
-                        } else {
-                            $errMsg = "Falha ao alterar estoque no eGestor: " . ($updateRes['error'] ?? 'Erro desconhecido');
-                            Logger::error($errMsg);
-                            Database::logSync('nuvemshop', 'stock_deduct_failed', (string)$orderId, $errMsg, 'error');
-                        }
+                        // Atualiza mapeamento no banco local
+                        $this->saveMapping([
+                            'egestor_id' => $egestorId,
+                            'nuvemshop_product_id' => $nuvemProdId,
+                            'nuvemshop_variant_id' => $nuvemVarId,
+                            'sku' => $sku,
+                            'barcode' => $barcode,
+                            'name' => $prodName,
+                            'stock_egestor' => $newStock,
+                            'stock_nuvemshop' => $newStock,
+                            'status' => 'synced',
+                            'last_sync_direction' => 'nuvem_to_egestor'
+                        ]);
                     }
                 } else {
                     $warnMsg = "Venda Nuvemshop #{$orderId}: Item '{$prodName}' (SKU: '{$sku}') não foi encontrado no eGestor.";
                     Logger::warning($warnMsg);
                     Database::logSync('nuvemshop', 'unmapped_product_sale', (string)$orderId, $warnMsg, 'warning');
-                }
-            }
-
-            // Se for venda confirmada (e não cancelamento), cadastra o cliente e lança a Venda no eGestor para emissão de NF-e
-            $saleResult = null;
-            if (!$isCancelled) {
-                try {
-                    $saleResult = $this->syncOrderCustomerAndSaleToEGestor($payload, $orderId);
-                } catch (\Throwable $errSale) {
-                    Logger::error("Erro ao registrar cliente/venda no eGestor para pedido #{$orderId}: " . $errSale->getMessage());
                 }
             }
 
