@@ -457,4 +457,19 @@ class EGestorClient {
         Logger::info("Excluindo venda {$codVenda} no eGestor...");
         return $this->request('DELETE', "/vendas/{$codVenda}");
     }
+
+    /**
+     * Consulta detalhes de uma compra no eGestor
+     */
+    public function getPurchase(int|string $codCompra): array {
+        return $this->request('GET', "/compras/{$codCompra}");
+    }
+
+    /**
+     * Lista compras do eGestor
+     */
+    public function getPurchases(int $page = 1, array $params = []): array {
+        $query = http_build_query(array_merge(['page' => $page], $params));
+        return $this->request('GET', '/compras?' . $query);
+    }
 }

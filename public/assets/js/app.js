@@ -987,21 +987,7 @@ async function executeExcelExport() {
                 showToast('Nenhum produto visível na página para exportar.', 'warning');
                 return;
             }
-        } else if (selectedScope === 'all_database') {
-            showToast('Consultando banco de dados para exportação...', 'info');
-            const params = new URLSearchParams({
-                action: 'export_products_data',
-                filter: filter,
-                status: status,
-                stock: stock
-            });
-            const res = await fetch(`api.php?${params.toString()}`);
-            const data = await res.json();
-            if (!data.success) {
-                throw new Error(data.error || 'Falha ao buscar produtos no banco');
-            }
-            productsToExport = data.items || [];
-        } else if (selectedScope === 'egestor_api') {
+        } else {
             showToast('Consultando catálogo do eGestor (pode levar alguns segundos)...', 'info');
             const params = new URLSearchParams({
                 action: 'export_egestor_full_catalog',

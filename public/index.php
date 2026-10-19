@@ -684,21 +684,11 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
         </label>
 
         <label class="export-option-label" style="display: flex; align-items: flex-start; gap: 10px; padding: 12px; background: #f8fafc; border: 1px solid var(--border-color); border-radius: var(--radius-sm); cursor: pointer;">
-          <input type="radio" name="export-scope" value="all_database" style="margin-top: 3px; cursor: pointer;">
-          <div>
-            <strong style="font-size: 13px; color: var(--text-main);">Todos os Produtos Sincronizados (Banco Local)</strong>
-            <p style="font-size: 12px; color: var(--text-muted); margin-top: 2px;" id="export-db-desc">
-              Exporta todos os produtos cadastrados e mapeados no middleware com estoques PDV e Nuvemshop, preços, SKU e status.
-            </p>
-          </div>
-        </label>
-
-        <label class="export-option-label" style="display: flex; align-items: flex-start; gap: 10px; padding: 12px; background: #f8fafc; border: 1px solid var(--border-color); border-radius: var(--radius-sm); cursor: pointer;">
           <input type="radio" name="export-scope" value="egestor_api" style="margin-top: 3px; cursor: pointer;">
           <div>
             <strong style="font-size: 13px; color: var(--text-main);">Catálogo Completo do eGestor (via API)</strong>
             <p style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">
-              Consulta e extrai todos os produtos cadastrados no eGestor PDV diretamente pela API.
+              Consulta e extrai todos os produtos cadastrados no eGestor PDV diretamente pela API, indicando quais já estão na Nuvemshop.
             </p>
           </div>
         </label>

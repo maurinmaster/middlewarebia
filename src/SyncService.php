@@ -36,11 +36,22 @@ class SyncService {
         }
 
         if ($module === 'produtos') {
+            // Regra 1: Todo cadastro feito no eGestor não deve ir automaticamente para a Nuvemshop
+            if ($action === 'created') {
+                $msg = "Produto criado no eGestor [ID {$codigo}]. Criação automática na Nuvemshop desativada conforme regra do sistema.";
+                Logger::info($msg);
+                Database::logSync('egestor', 'product_created_skipped', $codigo, $msg, 'info');
+                return ['success' => true, 'message' => $msg, 'skipped' => true];
+            }
             return $this->syncProductFromEGestor($codigo, $action);
         }
 
         if ($module === 'vendas') {
             return $this->syncSaleFromEGestor($codigo);
+        }
+
+        if ($module === 'compras' || $module === 'compras_itens') {
+            return $this->syncPurchaseFromEGestor($codigo);
         }
 
         Database::logSync('egestor', "module_{$module}", $codigo, "Evento ignorado (módulo {$module} não requer sync de estoque)", 'warning');
@@ -210,12 +221,67 @@ class SyncService {
     }
 
     /**
-     * Sincroniza venda do eGestor (quando uma venda é feita no balcão/PDV)
+     * Sincroniza venda efetuada no eGestor (quando uma venda é feita no balcão/PDV)
+     * Regra 4: Toda compra/venda efetuada no eGestor contabiliza no estoque da Nuvemshop (caso o produto exista na Nuvem)
      */
     public function syncSaleFromEGestor(string $codigoVenda): array {
-        Logger::info("Venda realizada no PDV eGestor [Venda ID: {$codigoVenda}]. Sincronizando estoques relacionados...");
-        Database::logSync('egestor', 'sale_completed', $codigoVenda, "Venda no PDV concluída. eGestor atualizará o estoque dos itens vendidos via webhook de produtos.", 'success');
+        Logger::info("Venda realizada no PDV eGestor [Venda ID: {$codigoVenda}]. Sincronizando estoques relacionados na Nuvemshop...");
+        $synced = 0;
+
+        try {
+            $saleRes = $this->egestor->getSale($codigoVenda);
+            if ($saleRes['success'] && !empty($saleRes['data']['produtos'])) {
+                foreach ($saleRes['data']['produtos'] as $item) {
+                    $codProd = $item['codProduto'] ?? null;
+                    if ($codProd) {
+                        $syncRes = $this->syncProductFromEGestor((string)$codProd, 'sale_stock_sync', false);
+                        if (!empty($syncRes['success']) && empty($syncRes['skipped'])) {
+                            $synced++;
+                        }
+                    }
+                }
+                $msg = "Venda no PDV concluída. {$synced} produto(s) atualizados na Nuvemshop.";
+                Database::logSync('egestor', 'sale_completed', $codigoVenda, $msg, 'success');
+                return ['success' => true, 'message' => $msg, 'synced_items' => $synced];
+            }
+        } catch (\Throwable $e) {
+            Logger::error("Erro ao sincronizar produtos da venda #{$codigoVenda}: " . $e->getMessage());
+        }
+
+        Database::logSync('egestor', 'sale_completed', $codigoVenda, "Venda no PDV registrada. Aguardando webhooks de produtos para baixa fina.", 'success');
         return ['success' => true, 'message' => 'Venda registrada com sucesso'];
+    }
+
+    /**
+     * Sincroniza compra/entrada efetuada no eGestor (compra de fornecedor)
+     * Regra 4: Toda compra efetuada no eGestor contabiliza no estoque da Nuvemshop (caso o produto exista na Nuvem)
+     */
+    public function syncPurchaseFromEGestor(string $codigoCompra): array {
+        Logger::info("Compra efetuada no eGestor [Compra ID: {$codigoCompra}]. Sincronizando estoques relacionados na Nuvemshop...");
+        $synced = 0;
+
+        try {
+            $purchaseRes = $this->egestor->getPurchase($codigoCompra);
+            if ($purchaseRes['success'] && !empty($purchaseRes['data']['produtos'])) {
+                foreach ($purchaseRes['data']['produtos'] as $item) {
+                    $codProd = $item['codProduto'] ?? null;
+                    if ($codProd) {
+                        $syncRes = $this->syncProductFromEGestor((string)$codProd, 'purchase_stock_sync', false);
+                        if (!empty($syncRes['success']) && empty($syncRes['skipped'])) {
+                            $synced++;
+                        }
+                    }
+                }
+                $msg = "Compra/Entrada no eGestor concluída. {$synced} produto(s) atualizados na Nuvemshop.";
+                Database::logSync('egestor', 'purchase_completed', $codigoCompra, $msg, 'success');
+                return ['success' => true, 'message' => $msg, 'synced_items' => $synced];
+            }
+        } catch (\Throwable $e) {
+            Logger::error("Erro ao sincronizar produtos da compra #{$codigoCompra}: " . $e->getMessage());
+        }
+
+        Database::logSync('egestor', 'purchase_completed', $codigoCompra, "Compra/Entrada no eGestor registrada.", 'success');
+        return ['success' => true, 'message' => 'Compra registrada com sucesso'];
     }
 
     /**

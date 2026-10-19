@@ -123,8 +123,30 @@ class Database {
             $db = self::getConnection();
             $stmt = $db->prepare("INSERT INTO sync_logs (source, action, entity_id, details, status) VALUES (?, ?, ?, ?, ?)");
             $stmt->execute([$source, $action, $entityId, $details, $status]);
+
+            // Regra 5: Limitação estrita do histórico de logs para evitar sobrecarga (mantém no máximo os últimos 500 logs)
+            // Executa poda aleatória a cada ~10 inserções para não impactar performance em cada escrita
+            if (mt_rand(1, 10) === 1) {
+                self::pruneHistory();
+            }
         } catch (\Exception $e) {
             Logger::error('Erro ao salvar log no banco: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Executa a rotação de histórico limitando o volume de dados salvos no SQLite
+     */
+    public static function pruneHistory(): void {
+        try {
+            $db = self::getConnection();
+            // Mantém apenas os últimos 500 logs de sincronização
+            $db->exec("DELETE FROM sync_logs WHERE id NOT IN (SELECT id FROM sync_logs ORDER BY id DESC LIMIT 500)");
+            
+            // Mantém apenas os últimos 300 registros de histórico de pedidos
+            $db->exec("DELETE FROM orders_sync WHERE id NOT IN (SELECT id FROM orders_sync ORDER BY id DESC LIMIT 300)");
+        } catch (\Exception $e) {
+            Logger::error('Erro ao podar histórico no banco: ' . $e->getMessage());
         }
     }
 
