@@ -183,6 +183,9 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
           </div>
 
           <div style="display: flex; gap: 8px; align-items: center;">
+            <button class="btn btn-secondary btn-sm" id="btn-open-unify-modal" onclick="openUnifyModal()" style="border-color: #6366f1; color: #6366f1; font-weight: 600; display: inline-flex; align-items: center; gap: 5px;" disabled title="Selecione 2 ou mais produtos com as caixas de seleção da tabela para agrupar em um único anúncio com variações">
+              🔗 Unificar em Grade (<span id="unify-selected-count">0</span>)
+            </button>
             <button class="btn btn-excel btn-sm" onclick="openExportModal()" id="btn-export-excel" title="Extrair dados para planilha Excel (.xlsx)">
               📊 Extrair para Excel
             </button>
@@ -203,6 +206,9 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
           <table>
             <thead>
               <tr>
+                <th style="width: 44px; text-align: center;">
+                  <input type="checkbox" id="select-all-unify" onchange="toggleSelectAllUnify(this)" title="Selecionar todos desta página para unificar">
+                </th>
                 <th style="width: 100px;">Cód. eGestor</th>
                 <th style="width: 110px;">SKU</th>
                 <th style="width: 130px;">Cód. Barras</th>
@@ -216,7 +222,7 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
             </thead>
             <tbody id="products-list-tbody">
               <tr>
-                <td colspan="9" style="text-align: center; color: var(--text-dim); padding: 30px;">
+                <td colspan="10" style="text-align: center; color: var(--text-dim); padding: 30px;">
                   Carregando lista de produtos...
                 </td>
               </tr>
@@ -808,6 +814,107 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
         <button type="submit" class="btn btn-primary" id="btn-manual-order-submit">🚀 Enviar para eGestor</button>
       </div>
     </form>
+  </div>
+<!-- Modal Unificar Produtos do eGestor em Grade na Nuvemshop -->
+<div id="unify-modal" class="modal-overlay">
+  <div class="modal" style="max-width: 920px; max-height: 90vh; display: flex; flex-direction: column;">
+    <div class="modal-header">
+      <div>
+        <h3>🔗 Unificar Produtos em Grade na Nuvemshop</h3>
+        <p style="font-size: 12px; color: var(--text-muted); margin-top: 3px;">
+          Agrupa os produtos individuais selecionados do eGestor em um único produto com variações de Cor e Tamanho na Nuvemshop.
+        </p>
+      </div>
+      <button class="modal-close" onclick="closeUnifyModal()">&times;</button>
+    </div>
+    
+    <div style="overflow-y: auto; padding-right: 6px; flex: 1;">
+      <!-- Dados Principais do Anúncio -->
+      <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 14px;">
+        <div class="form-group" style="margin-bottom: 0;">
+          <label>Nome Principal na Nuvemshop *:</label>
+          <input type="text" id="unify-product-name" class="form-control" required placeholder="Ex: Conjunto de Calça 6000">
+          <small style="color: var(--text-muted); font-size: 11px;">Nome comum da vitrine que reunirá todas as cores.</small>
+        </div>
+        <div class="form-group" style="margin-bottom: 0;">
+          <label>Preço Padrão (R$):</label>
+          <input type="number" step="0.01" id="unify-default-price" class="form-control" placeholder="Opcional" oninput="applyDefaultPriceToAll(this.value)">
+          <small style="color: var(--text-muted); font-size: 11px;">Se digitado, ajusta o preço de todas as variações.</small>
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 14px;">
+        <label>Descrição do Produto:</label>
+        <textarea id="unify-product-desc" class="form-control" rows="2" placeholder="Descrição do produto para o e-commerce..."></textarea>
+      </div>
+
+      <!-- Configuração dos Atributos da Grade -->
+      <div style="background: #f8fafc; border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <strong style="font-size: 13px; color: var(--text-main);">Propriedades da Grade (Atributos)</strong>
+          <label style="font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; cursor: pointer;">
+            <input type="checkbox" id="unify-enable-attr2" onchange="toggleUnifyAttr2(this.checked)" checked>
+            Incluir 2º Atributo (ex: Tamanho)
+          </label>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+          <div>
+            <label style="font-size: 12px; font-weight: 600;">1º Atributo (ex: Cor):</label>
+            <input type="text" id="unify-attr1-name" class="form-control" value="Cor" style="height: 34px;" oninput="updateModalAttrHeaders()">
+          </div>
+          <div id="unify-attr2-group">
+            <label style="font-size: 12px; font-weight: 600;">2º Atributo (ex: Tamanho):</label>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="unify-attr2-name" class="form-control" value="Tamanho" style="height: 34px; width: 45%;" oninput="updateModalAttrHeaders()">
+              <input type="text" id="unify-attr2-default" class="form-control" placeholder="Padrão (ex: Único)" value="Único (P/M/G)" style="height: 34px; flex: 1;" title="Digite para aplicar a todas as linhas" oninput="applyDefaultAttr2ToAll(this.value)">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tabela com os Itens Selecionados do eGestor -->
+      <div>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <strong style="font-size: 13px; color: var(--text-main);">Produtos do eGestor Vinculados (<span id="unify-modal-items-count">0</span>):</strong>
+          <span style="font-size: 11px; color: #4f46e5; font-weight: 500;">💡 O SKU de cada variante amarra a sincronização automática de estoque!</span>
+        </div>
+
+        <div class="table-responsive" style="max-height: 260px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: var(--radius-sm);">
+          <table style="font-size: 12px; margin-bottom: 0;">
+            <thead style="position: sticky; top: 0; background: #f1f5f9; z-index: 2;">
+              <tr>
+                <th style="width: 70px;">Cód.</th>
+                <th>Nome no eGestor</th>
+                <th style="width: 140px;" id="th-unify-attr1">Cor *</th>
+                <th style="width: 140px;" id="th-unify-attr2">Tamanho *</th>
+                <th style="width: 80px;">Estoque</th>
+                <th style="width: 110px;">Preço (R$)</th>
+                <th style="width: 100px;">SKU Nuvem</th>
+                <th style="width: 36px; text-align: center;"></th>
+              </tr>
+            </thead>
+            <tbody id="unify-modal-tbody">
+              <!-- Inserido dinamicamente via JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Status Box -->
+      <div id="unify-status-box" style="display: none; margin-top: 14px; padding: 12px; border-radius: var(--radius-sm); font-size: 13px;">
+      </div>
+
+    </div>
+
+    <div class="modal-footer" style="margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+      <span style="font-size: 12px; color: var(--text-muted);" id="unify-footer-info"></span>
+      <div style="display: flex; gap: 10px;">
+        <button type="button" class="btn btn-secondary" onclick="closeUnifyModal()">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="btn-submit-unify" onclick="submitUnifyProducts()" style="background: #4f46e5; border-color: #4f46e5;">
+          🚀 Criar Produto com Grade na Nuvemshop
+        </button>
+      </div>
+    </div>
   </div>
 </div>
 

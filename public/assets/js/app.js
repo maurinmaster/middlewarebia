@@ -225,6 +225,7 @@ window.currentProductsPage = 1;
 
 async function loadProductsList(page = 1) {
     window.currentProductsPage = page;
+    window.selectedUnifyProducts = window.selectedUnifyProducts || new Map();
     const tableBody = document.getElementById('products-list-tbody');
     const summaryText = document.getElementById('products-list-summary');
     const pagTop = document.getElementById('pagination-top-btns');
@@ -233,7 +234,7 @@ async function loadProductsList(page = 1) {
 
     if (!tableBody) return;
 
-    tableBody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-dim); padding: 30px;">Consultando produtos no eGestor...</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-dim); padding: 30px;">Consultando produtos no eGestor...</td></tr>';
     if (summaryText) summaryText.textContent = 'Consultando API do eGestor...';
 
     const filterInput = document.getElementById('search-products-list');
@@ -256,7 +257,7 @@ async function loadProductsList(page = 1) {
         const data = await res.json();
 
         if (!data.success) {
-            tableBody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--danger); padding: 30px;">Erro ao consultar eGestor: ${escapeHtml(data.error || 'Falha')}</td></tr>`;
+            tableBody.innerHTML = `<tr><td colspan="10" style="text-align: center; color: var(--danger); padding: 30px;">Erro ao consultar eGestor: ${escapeHtml(data.error || 'Falha')}</td></tr>`;
             if (summaryText) summaryText.textContent = 'Erro ao carregar catálogo';
             return;
         }
@@ -303,7 +304,8 @@ async function loadProductsList(page = 1) {
         if (pagBottom) pagBottom.innerHTML = renderPaginationBtns();
 
         if (items.length === 0) {
-            tableBody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-dim); padding: 35px;">Nenhum produto encontrado nesta página com os filtros selecionados.</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--text-dim); padding: 35px;">Nenhum produto encontrado nesta página com os filtros selecionados.</td></tr>';
+            if (typeof updateUnifySelectionUI === 'function') updateUnifySelectionUI();
             return;
         }
 
@@ -348,8 +350,13 @@ async function loadProductsList(page = 1) {
                 `;
             }
 
+            const isChecked = window.selectedUnifyProducts && window.selectedUnifyProducts.has(String(p.codigo));
+
             return `
                 <tr>
+                    <td style="text-align: center;">
+                        <input type="checkbox" class="unify-checkbox" data-id="${p.codigo}" onchange="toggleUnifySelection('${p.codigo}')" ${isChecked ? 'checked' : ''} title="Selecionar para unificar em grade">
+                    </td>
                     <td><strong>${p.codigo}</strong></td>
                     <td><span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">${p.sku || '-'}</span></td>
                     <td><span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);">${p.barcode || '-'}</span></td>
@@ -363,8 +370,10 @@ async function loadProductsList(page = 1) {
             `;
         }).join('');
 
+        if (typeof updateUnifySelectionUI === 'function') updateUnifySelectionUI();
+
     } catch (err) {
-        tableBody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--danger); padding: 30px;">Erro de conexão ao consultar produtos do eGestor.</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="10" style="text-align: center; color: var(--danger); padding: 30px;">Erro de conexão ao consultar produtos do eGestor.</td></tr>';
     }
 }
 
@@ -1302,6 +1311,417 @@ async function reSyncOrder(orderId) {
         }
     } catch (err) {
         showToast('Erro de conexão ao reenviar pedido.', 'error');
+    }
+}
+
+// ========================================================
+// UNIFICAÇÃO DE PRODUTOS DO EGESTOR EM GRADE NUVEMSHOP
+// ========================================================
+window.selectedUnifyProducts = window.selectedUnifyProducts || new Map();
+
+function toggleUnifySelection(codigo) {
+    const sCodigo = String(codigo);
+    if (window.selectedUnifyProducts.has(sCodigo)) {
+        window.selectedUnifyProducts.delete(sCodigo);
+    } else {
+        const prod = (window.currentProductsList || []).find(p => String(p.codigo) === sCodigo);
+        if (prod) {
+            window.selectedUnifyProducts.set(sCodigo, prod);
+        }
+    }
+    updateUnifySelectionUI();
+}
+
+function toggleSelectAllUnify(masterCheckbox) {
+    const isChecked = masterCheckbox.checked;
+    const pageItems = window.currentProductsList || [];
+
+    for (const p of pageItems) {
+        const sCodigo = String(p.codigo);
+        if (isChecked) {
+            window.selectedUnifyProducts.set(sCodigo, p);
+        } else {
+            window.selectedUnifyProducts.delete(sCodigo);
+        }
+    }
+
+    document.querySelectorAll('.unify-checkbox').forEach(cb => {
+        cb.checked = isChecked;
+    });
+
+    updateUnifySelectionUI();
+}
+
+function updateUnifySelectionUI() {
+    const count = window.selectedUnifyProducts.size;
+    const countEl = document.getElementById('unify-selected-count');
+    const btn = document.getElementById('btn-open-unify-modal');
+    const masterCb = document.getElementById('select-all-unify');
+
+    if (countEl) countEl.textContent = count;
+    if (btn) {
+        btn.disabled = count < 2;
+        if (count >= 2) {
+            btn.style.background = '#4f46e5';
+            btn.style.color = '#ffffff';
+            btn.style.borderColor = '#4f46e5';
+        } else {
+            btn.style.background = '';
+            btn.style.color = '#6366f1';
+            btn.style.borderColor = '#6366f1';
+        }
+    }
+
+    if (masterCb) {
+        const pageItems = window.currentProductsList || [];
+        if (pageItems.length === 0) {
+            masterCb.checked = false;
+            masterCb.indeterminate = false;
+        } else {
+            const pageSelected = pageItems.filter(p => window.selectedUnifyProducts.has(String(p.codigo))).length;
+            if (pageSelected === pageItems.length) {
+                masterCb.checked = true;
+                masterCb.indeterminate = false;
+            } else if (pageSelected > 0) {
+                masterCb.checked = false;
+                masterCb.indeterminate = true;
+            } else {
+                masterCb.checked = false;
+                masterCb.indeterminate = false;
+            }
+        }
+    }
+}
+
+// Auxiliar inteligente para deduzir nome base comum e cores/diferenças
+function deduceUnifyBaseNameAndColors(products) {
+    if (!products || products.length === 0) return { baseName: '', colors: [] };
+    const names = products.map(p => (p.nome || '').trim());
+
+    // Lista de cores conhecidas comuns em moda/vestuário
+    const commonColors = [
+        'preto', 'preta', 'branco', 'branca', 'off-white', 'off white', 'offwhite',
+        'azul marinho', 'azul royal', 'azul claro', 'azul celeste', 'azul',
+        'verde militar', 'verde musgo', 'verde bandeira', 'verde menta', 'verde lima', 'verde',
+        'rosa bebe', 'rosa bebê', 'rosa chiclete', 'rosa pink', 'pink', 'rosa',
+        'vermelho', 'vermelha', 'vinho', 'bordo', 'bordô', 'marsala',
+        'amarelo', 'amarela', 'mostarda', 'laranja', 'terracota', 'coral',
+        'bege', 'nude', 'marrom', 'caramelo', 'cacau', 'fendi',
+        'cinza mescla', 'cinza chumbo', 'cinza claro', 'cinza',
+        'lilas', 'lilás', 'roxo', 'roxa', 'lavanda', 'dourado', 'prata'
+    ];
+
+    // Tenta encontrar maior prefixo comum
+    let commonPrefix = names[0];
+    for (let i = 1; i < names.length; i++) {
+        while (!names[i].toLowerCase().startsWith(commonPrefix.toLowerCase()) && commonPrefix.length > 0) {
+            commonPrefix = commonPrefix.slice(0, -1);
+        }
+    }
+    // Remove traços ou espaços no final
+    commonPrefix = commonPrefix.replace(/[\s\-_/]+$/, '').trim();
+
+    // Se o prefixo for muito curto (< 3 letras), usa o nome do primeiro
+    let baseName = commonPrefix;
+    if (baseName.length < 3) {
+        baseName = names[0];
+    }
+
+    // Para cada produto, extrai a cor
+    const colors = products.map(p => {
+        const origName = (p.nome || '').trim();
+        const lowerName = origName.toLowerCase();
+
+        // 1. Procura na lista de cores
+        for (const c of commonColors) {
+            const regex = new RegExp(`\\b${c}\\b`, 'i');
+            if (regex.test(lowerName)) {
+                return c.charAt(0).toUpperCase() + c.slice(1);
+            }
+        }
+
+        // 2. Se tinha prefixo comum, pega o que sobrou
+        if (commonPrefix && commonPrefix.length >= 3 && lowerName.startsWith(commonPrefix.toLowerCase())) {
+            let rest = origName.substring(commonPrefix.length).replace(/^[\s\-_/]+/, '').trim();
+            if (rest) return rest;
+        }
+
+        // 3. Fallback: última palavra do nome
+        const parts = origName.split(/[\s\-_/]+/);
+        return parts.length > 1 ? parts[parts.length - 1] : origName;
+    });
+
+    return { baseName, colors };
+}
+
+function openUnifyModal() {
+    const modal = document.getElementById('unify-modal');
+    if (!modal) return;
+
+    const count = window.selectedUnifyProducts.size;
+    if (count < 2) {
+        showToast('Selecione pelo menos 2 produtos do eGestor na tabela para unificar.', 'warning');
+        return;
+    }
+
+    const products = Array.from(window.selectedUnifyProducts.values());
+    const deduction = deduceUnifyBaseNameAndColors(products);
+
+    const nameInput = document.getElementById('unify-product-name');
+    if (nameInput) nameInput.value = deduction.baseName || products[0].nome || '';
+
+    const descInput = document.getElementById('unify-product-desc');
+    if (descInput) descInput.value = `Produto com grade de variações unificadas a partir do catálogo do eGestor.`;
+
+    const countEl = document.getElementById('unify-modal-items-count');
+    if (countEl) countEl.textContent = products.length;
+
+    const defaultPriceInput = document.getElementById('unify-default-price');
+    if (defaultPriceInput) defaultPriceInput.value = '';
+
+    const defaultAttr2 = document.getElementById('unify-attr2-default')?.value || 'Único (P/M/G)';
+    const enableAttr2 = document.getElementById('unify-enable-attr2')?.checked !== false;
+
+    // Renderiza linhas da tabela de variações no modal
+    const tbody = document.getElementById('unify-modal-tbody');
+    if (tbody) {
+        tbody.innerHTML = products.map((p, idx) => {
+            const guessedColor = deduction.colors[idx] || `Cor ${idx + 1}`;
+            const skuVal = p.sku && p.sku !== '-' ? p.sku : p.codigo;
+            const priceVal = p.preco ? parseFloat(p.preco).toFixed(2) : '0.00';
+            const stockVal = parseFloat(p.estoque || 0);
+
+            return `
+                <tr id="unify-row-${p.codigo}" data-egestor-id="${p.codigo}">
+                    <td><strong>${p.codigo}</strong></td>
+                    <td title="${escapeHtml(p.nome)}">
+                        <span style="display: block; max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500;">
+                            ${escapeHtml(p.nome)}
+                        </span>
+                    </td>
+                    <td>
+                        <input type="text" class="form-control unify-item-attr1" value="${escapeHtml(guessedColor)}" required style="height: 30px; font-size: 12px;" placeholder="Ex: Rosa">
+                    </td>
+                    <td class="unify-col-attr2" style="${enableAttr2 ? '' : 'display: none;'}">
+                        <input type="text" class="form-control unify-item-attr2" value="${escapeHtml(defaultAttr2)}" style="height: 30px; font-size: 12px;" placeholder="Ex: Único">
+                    </td>
+                    <td>
+                        <span class="stock-tag ${stockVal > 0 ? 'in-stock' : 'out-of-stock'}">${stockVal} un</span>
+                    </td>
+                    <td>
+                        <input type="number" step="0.01" class="form-control unify-item-price" value="${priceVal}" style="height: 30px; font-size: 12px; width: 95px;">
+                    </td>
+                    <td>
+                        <input type="text" class="form-control unify-item-sku" value="${escapeHtml(skuVal)}" style="height: 30px; font-size: 11px; font-family: var(--font-mono); width: 90px;" title="SKU que vincula este produto ao eGestor">
+                    </td>
+                    <td style="text-align: center;">
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="removeUnifyModalItem('${p.codigo}')" title="Remover da unificação" style="padding: 2px 6px; color: var(--danger); border-color: transparent;">
+                            ✕
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    const statusBox = document.getElementById('unify-status-box');
+    if (statusBox) statusBox.style.display = 'none';
+
+    updateModalAttrHeaders();
+    modal.classList.add('active');
+}
+
+function closeUnifyModal() {
+    const modal = document.getElementById('unify-modal');
+    if (modal) modal.classList.remove('active');
+}
+
+function toggleUnifyAttr2(enabled) {
+    const group = document.getElementById('unify-attr2-group');
+    const th2 = document.getElementById('th-unify-attr2');
+    const cols = document.querySelectorAll('.unify-col-attr2');
+
+    if (group) group.style.display = enabled ? 'block' : 'none';
+    if (th2) th2.style.display = enabled ? '' : 'none';
+    cols.forEach(td => td.style.display = enabled ? '' : 'none');
+}
+
+function updateModalAttrHeaders() {
+    const attr1 = document.getElementById('unify-attr1-name')?.value.trim() || 'Cor';
+    const attr2 = document.getElementById('unify-attr2-name')?.value.trim() || 'Tamanho';
+
+    const th1 = document.getElementById('th-unify-attr1');
+    const th2 = document.getElementById('th-unify-attr2');
+
+    if (th1) th1.textContent = attr1 + ' *';
+    if (th2) th2.textContent = attr2 + ' *';
+}
+
+function applyDefaultAttr2ToAll(val) {
+    document.querySelectorAll('.unify-item-attr2').forEach(input => {
+        input.value = val;
+    });
+}
+
+function applyDefaultPriceToAll(val) {
+    if (val === '' || isNaN(val)) return;
+    const num = parseFloat(val).toFixed(2);
+    document.querySelectorAll('.unify-item-price').forEach(input => {
+        input.value = num;
+    });
+}
+
+function removeUnifyModalItem(egestorId) {
+    window.selectedUnifyProducts.delete(String(egestorId));
+    const row = document.getElementById(`unify-row-${egestorId}`);
+    if (row) row.remove();
+
+    const cb = document.querySelector(`.unify-checkbox[data-id="${egestorId}"]`);
+    if (cb) cb.checked = false;
+
+    updateUnifySelectionUI();
+
+    const count = window.selectedUnifyProducts.size;
+    const countEl = document.getElementById('unify-modal-items-count');
+    if (countEl) countEl.textContent = count;
+
+    if (count < 2) {
+        showToast('Restou menos de 2 produtos. O modal de unificação requer ao menos 2 itens.', 'warning');
+        closeUnifyModal();
+    }
+}
+
+async function submitUnifyProducts() {
+    const nameInput = document.getElementById('unify-product-name');
+    const name = nameInput ? nameInput.value.trim() : '';
+
+    if (!name) {
+        showToast('Informe o Nome Principal do Produto para a Nuvemshop.', 'warning');
+        if (nameInput) nameInput.focus();
+        return;
+    }
+
+    const descInput = document.getElementById('unify-product-desc');
+    const description = descInput ? descInput.value.trim() : '';
+
+    const attr1Name = (document.getElementById('unify-attr1-name')?.value || 'Cor').trim();
+    const enableAttr2 = document.getElementById('unify-enable-attr2')?.checked !== false;
+    const attr2Name = (document.getElementById('unify-attr2-name')?.value || 'Tamanho').trim();
+
+    const attributes = [attr1Name];
+    if (enableAttr2 && attr2Name) {
+        attributes.push(attr2Name);
+    }
+
+    const rows = document.querySelectorAll('#unify-modal-tbody tr');
+    if (rows.length < 2) {
+        showToast('A unificação requer pelo menos 2 produtos do eGestor.', 'warning');
+        return;
+    }
+
+    const variants = [];
+    for (const r of rows) {
+        const egestorId = r.getAttribute('data-egestor-id');
+        const attr1Val = (r.querySelector('.unify-item-attr1')?.value || '').trim();
+        const attr2Val = (r.querySelector('.unify-item-attr2')?.value || '').trim();
+        const priceVal = parseFloat(r.querySelector('.unify-item-price')?.value || 0);
+        const skuVal = (r.querySelector('.unify-item-sku')?.value || '').trim() || egestorId;
+
+        if (!attr1Val) {
+            showToast(`Preencha o valor de ${attr1Name} para o produto eGestor #${egestorId}`, 'warning');
+            return;
+        }
+
+        const values = [attr1Val];
+        if (enableAttr2) {
+            if (!attr2Val) {
+                showToast(`Preencha o valor de ${attr2Name} para o produto eGestor #${egestorId}`, 'warning');
+                return;
+            }
+            values.push(attr2Val);
+        }
+
+        variants.push({
+            egestor_id: egestorId,
+            sku: skuVal,
+            price: priceVal,
+            values: values
+        });
+    }
+
+    const payload = {
+        name: name,
+        description: description,
+        attributes: attributes,
+        variants: variants
+    };
+
+    const btn = document.getElementById('btn-submit-unify');
+    const statusBox = document.getElementById('unify-status-box');
+
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Criando Anúncio com Grade na Nuvemshop...';
+
+    if (statusBox) {
+        statusBox.style.display = 'block';
+        statusBox.style.background = '#eff6ff';
+        statusBox.style.border = '1px solid #bfdbfe';
+        statusBox.style.color = '#1e40af';
+        statusBox.innerHTML = `
+            <strong>Enviando para Nuvemshop:</strong><br>
+            - Montando grade de ${variants.length} variações vinculadas aos IDs do eGestor...<br>
+            - Aguarde a resposta da API da Nuvemshop...
+        `;
+    }
+
+    try {
+        const res = await fetch('api.php?action=create_unified_product', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            showToast(data.message || 'Produto unificado com sucesso na Nuvemshop!', 'success');
+            if (statusBox) {
+                statusBox.style.background = '#f0fdf4';
+                statusBox.style.border = '1px solid #bbf7d0';
+                statusBox.style.color = '#166534';
+                statusBox.innerHTML = `✅ <strong>Sucesso!</strong> Produto criado na Nuvemshop com grade unificada (#${data.nuvemshop_product_id}).`;
+            }
+
+            // Limpa seleções
+            window.selectedUnifyProducts.clear();
+            updateUnifySelectionUI();
+
+            setTimeout(() => {
+                closeUnifyModal();
+                loadProductsList(window.currentProductsPage || 1);
+                loadLogs();
+            }, 1800);
+
+        } else {
+            showToast('Erro ao unificar produtos: ' + (data.error || 'Falha'), 'error');
+            if (statusBox) {
+                statusBox.style.background = '#fef2f2';
+                statusBox.style.border = '1px solid #fecaca';
+                statusBox.style.color = '#991b1b';
+                statusBox.innerHTML = `❌ <strong>Erro:</strong> ${escapeHtml(data.error || 'Falha ao processar')}`;
+            }
+        }
+    } catch (err) {
+        showToast('Erro de comunicação ao enviar dados para a API.', 'error');
+        if (statusBox) {
+            statusBox.style.background = '#fef2f2';
+            statusBox.style.border = '1px solid #fecaca';
+            statusBox.style.color = '#991b1b';
+            statusBox.innerHTML = `❌ <strong>Erro de conexão:</strong> Falha ao se comunicar com o servidor.`;
+        }
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
     }
 }
 

@@ -1560,13 +1560,25 @@ class SyncService {
             ];
         }
 
+        // Monta fotos (coletadas do eGestor + fotos extras se fornecidas)
+        $extraImages = [];
+        if (!empty($data['images']) && is_array($data['images'])) {
+            foreach ($data['images'] as $img) {
+                $imgStr = trim((string)$img);
+                if ($imgStr !== '' && !in_array($imgStr, $collectedImages)) {
+                    $extraImages[] = $imgStr;
+                }
+            }
+        }
+        $finalImages = array_values(array_unique(array_filter(array_merge($collectedImages, $extraImages))));
+
         // Monta payload e cria o produto na Nuvemshop
         $payload = [
             'name' => $parentName,
             'description' => trim($data['description'] ?? "Produto com grade unificada a partir do eGestor PDV."),
             'attributes' => array_map(fn($a) => is_array($a) ? $a : ['pt' => trim((string)$a)], $attributes),
             'variants' => $nuvemVariants,
-            'images' => $collectedImages
+            'images' => $finalImages
         ];
 
         Logger::info("Criando produto com grade unificada na Nuvemshop: '{$parentName}' com " . count($nuvemVariants) . " variações...");
