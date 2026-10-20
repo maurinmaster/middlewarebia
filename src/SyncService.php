@@ -194,76 +194,71 @@ class SyncService {
                 }
             }
 
-            $db = Database::getConnection();
+            // 1. Busca se o produto existe na Nuvemshop em TEMPO REAL (sem depender de tabela de banco)
+            $nuvemIndex = $this->getNuvemshopProductsIndex();
+            $nuvemMatch = null;
 
-            // 1. Tenta achar mapeamento existente no banco local
-            $stmt = $db->prepare("SELECT * FROM product_mappings WHERE (egestor_id = ? OR (sku != '' AND sku = ?)) AND nuvemshop_product_id IS NOT NULL AND nuvemshop_product_id != '' AND status != 'removed_from_nuvem' LIMIT 1");
-            $stmt->execute([$codigo, $sku]);
-            $mapping = $stmt->fetch();
+            if ($sku !== '' && isset($nuvemIndex['by_sku'][$sku])) {
+                $nuvemMatch = $nuvemIndex['by_sku'][$sku];
+            } elseif (isset($nuvemIndex['by_sku'][(string)$codigo])) {
+                $nuvemMatch = $nuvemIndex['by_sku'][(string)$codigo];
+            } elseif ($barcode !== '' && isset($nuvemIndex['by_barcode'][$barcode])) {
+                $nuvemMatch = $nuvemIndex['by_barcode'][$barcode];
+            }
 
-            $nuvemProductId = null;
-            $nuvemVariantId = null;
-
-            if ($mapping && !empty($mapping['nuvemshop_product_id']) && !empty($mapping['nuvemshop_variant_id'])) {
-                $nuvemProductId = $mapping['nuvemshop_product_id'];
-                $nuvemVariantId = $mapping['nuvemshop_variant_id'];
-            } else {
-                // 2. Procura na Nuvemshop por SKU
+            // Fallback: se não estiver no índice em memória, busca direto na API da Nuvemshop
+            if (!$nuvemMatch) {
                 $searchResult = $this->nuvemshop->findProductVariantBySku($sku);
-
-                // 3. Se não achou por SKU e tiver código de barras, tenta por código de barras
                 if (!$searchResult && $barcode !== '') {
                     $searchResult = $this->nuvemshop->findProductVariantByBarcode($barcode);
                 }
-
                 if ($searchResult) {
-                    $nuvemProductId = $searchResult['product']['id'];
-                    $nuvemVariantId = $searchResult['variant']['id'];
+                    $nuvemMatch = [
+                        'product_id' => (string)$searchResult['product']['id'],
+                        'variant_id' => (string)$searchResult['variant']['id'],
+                        'sku' => $sku,
+                        'name' => $nome
+                    ];
                 }
             }
 
-            if ($nuvemProductId && $nuvemVariantId) {
+            if ($nuvemMatch) {
+                $nuvemProductId = $nuvemMatch['product_id'];
+                $nuvemVariantId = $nuvemMatch['variant_id'];
+
                 // Produto existe na Nuvemshop -> Atualiza Estoque e Preço
                 $updateRes = $this->nuvemshop->updateVariantStock($nuvemProductId, $nuvemVariantId, (int)$estoque);
                 if ($precoVenda > 0) {
                     $this->nuvemshop->updateVariantPrice($nuvemProductId, $nuvemVariantId, $precoVenda);
                 }
-                // Se a variante na Nuvemshop não tiver SKU, preenche com o SKU/código do eGestor
-                if (!empty($searchResult['variant']) && trim((string)($searchResult['variant']['sku'] ?? '')) === '') {
-                    $this->nuvemshop->updateVariant($nuvemProductId, $nuvemVariantId, ['sku' => $sku]);
+
+                // Se retornar 404 (Not Found), o produto foi excluído da Nuvemshop
+                if (!$updateRes['success'] && (($updateRes['status'] ?? 0) === 404 || str_contains($updateRes['error'] ?? '', 'Not Found'))) {
+                    $this->clearNuvemshopCache();
+                    $msg = "Produto do eGestor [ID {$codigo} - '{$nome}'] não existe na Nuvemshop (Not Found). Nenhuma ação necessária.";
+                    Logger::info($msg);
+                    Database::logSync('egestor', 'unmapped_product_skipped', $codigo, $msg, 'info');
+                    return ['success' => true, 'message' => $msg, 'skipped' => true];
                 }
-                
+
                 if ($updateRes['success']) {
                     $status = 'synced';
                     $msg = "Estoque sincronizado na Nuvemshop com sucesso: {$estoque} un.";
                     Database::logSync('egestor', 'stock_updated', $codigo, "Produto '{$nome}' (SKU {$sku}) atualizado para {$estoque} un na Nuvemshop", 'success');
+                    $this->clearNuvemshopCache();
+                    return ['success' => true, 'message' => $msg, 'nuvemshop_product_id' => $nuvemProductId];
                 } else {
                     $status = 'error';
                     $msg = "Erro ao atualizar estoque na Nuvemshop: " . ($updateRes['error'] ?? 'desconhecido');
                     Database::logSync('egestor', 'stock_update_failed', $codigo, $msg, 'error');
+                    return ['success' => false, 'error' => $msg];
                 }
-
-                $this->saveMapping([
-                    'egestor_id' => $codigo,
-                    'nuvemshop_product_id' => $nuvemProductId,
-                    'nuvemshop_variant_id' => $nuvemVariantId,
-                    'sku' => $sku,
-                    'barcode' => $barcode,
-                    'name' => $nome,
-                    'stock_egestor' => $estoque,
-                    'stock_nuvemshop' => $estoque,
-                    'price' => $precoVenda,
-                    'status' => $status,
-                    'last_sync_direction' => 'egestor_to_nuvem'
-                ]);
-
-                return ['success' => $updateRes['success'], 'message' => $msg, 'nuvemshop_product_id' => $nuvemProductId];
             } else {
                 // Se NÃO foi encontrado mapeamento na Nuvemshop:
                 // Se for webhook automático do eGestor ($forceCreate === false), NUNCA cria produto avulso automaticamente!
                 // O lojista cadastra produtos pela tela de cadastro (com grade) ou pelo botão manual "Enviar para Nuvem" no Vizor.
                 if (!$forceCreate) {
-                    $msg = "Produto do eGestor [ID {$codigo} - '{$nome}'] não está mapeado na Nuvemshop. Ignorando criação avulsa automática via webhook.";
+                    $msg = "Produto do eGestor [ID {$codigo} - '{$nome}'] não está na Nuvemshop. Ignorando atualização (regra: apenas produtos presentes na Nuvemshop são atualizados).";
                     Logger::info($msg);
                     Database::logSync('egestor', 'unmapped_product_skipped', $codigo, $msg, 'info');
                     return ['success' => true, 'message' => $msg, 'skipped' => true];
@@ -465,47 +460,19 @@ class SyncService {
 
                 $egestorId = null;
 
-                // A) Busca na tabela local de mapeamentos com prioridade estrita:
-                // 1º Por ID da Variante (garante que produtos com grade/variações unificadas encontrem o eGestor ID exato daquela cor/tamanho!)
-                $mapping = null;
-                if (!empty($nuvemVarId)) {
-                    $stmt = $db->prepare("SELECT * FROM product_mappings WHERE nuvemshop_variant_id = ? LIMIT 1");
-                    $stmt->execute([(string)$nuvemVarId]);
-                    $mapping = $stmt->fetch();
-                }
+                $egestorId = null;
 
-                // 2º Por SKU
-                if (!$mapping && $sku !== '') {
-                    $stmt = $db->prepare("SELECT * FROM product_mappings WHERE sku != '' AND sku = ? LIMIT 1");
-                    $stmt->execute([$sku]);
-                    $mapping = $stmt->fetch();
-                }
-
-                // 3º Por Código de Barras
-                if (!$mapping && $barcode !== '') {
-                    $stmt = $db->prepare("SELECT * FROM product_mappings WHERE barcode != '' AND barcode = ? LIMIT 1");
-                    $stmt->execute([$barcode]);
-                    $mapping = $stmt->fetch();
-                }
-
-                // 4º Por ID do Produto Pai (apenas fallback para produtos de variante única)
-                if (!$mapping && !empty($nuvemProdId)) {
-                    $stmt = $db->prepare("SELECT * FROM product_mappings WHERE nuvemshop_product_id = ? LIMIT 1");
-                    $stmt->execute([(string)$nuvemProdId]);
-                    $mapping = $stmt->fetch();
-                }
-
-                if ($mapping && !empty($mapping['egestor_id'])) {
-                    $egestorId = $mapping['egestor_id'];
-                } elseif ($sku !== '') {
-                    // B) Se não encontrou no cache local, pesquisa direto na API do eGestor pelo SKU
-                    Logger::info("Buscando produto na API do eGestor pelo SKU: '{$sku}'...");
+                // Busca item diretamente na API do eGestor em tempo real:
+                // 1º Por SKU
+                if ($sku !== '') {
                     $egestorProd = $this->egestor->findProductBySku($sku);
                     if ($egestorProd && !empty($egestorProd['codigo'])) {
                         $egestorId = (string)$egestorProd['codigo'];
                     }
-                } elseif ($barcode !== '') {
-                    Logger::info("Buscando produto na API do eGestor pelo Código de Barras: '{$barcode}'...");
+                }
+
+                // 2º Por Código de Barras
+                if (!$egestorId && $barcode !== '') {
                     $egestorProd = $this->egestor->findProductByBarcode($barcode);
                     if ($egestorProd && !empty($egestorProd['codigo'])) {
                         $egestorId = (string)$egestorProd['codigo'];
@@ -741,33 +708,29 @@ class SyncService {
                 }
             }
 
-            // 1. Tenta achar na Nuvemshop (via banco local ou busca por SKU/Barcode real)
-            $stmt = $db->prepare("SELECT * FROM product_mappings WHERE (egestor_id != '' AND egestor_id = ?) OR (sku != '' AND sku = ?) LIMIT 1");
-            $stmt->execute([$codigo, $sku]);
-            $mapping = $stmt->fetch();
-
-            $nuvemProductId = null;
-            $nuvemVariantId = null;
-
-            if ($mapping && !empty($mapping['nuvemshop_product_id']) && !empty($mapping['nuvemshop_variant_id'])) {
-                $nuvemProductId = $mapping['nuvemshop_product_id'];
-                $nuvemVariantId = $mapping['nuvemshop_variant_id'];
-            } else {
-                $search = $this->nuvemshop->findProductVariantBySku($sku);
-                if (!$search && $barcode !== '') {
-                    $search = $this->nuvemshop->findProductVariantByBarcode($barcode);
-                }
-                if ($search) {
-                    $nuvemProductId = $search['product']['id'];
-                    $nuvemVariantId = $search['variant']['id'];
-                }
+            // 1. Tenta achar na Nuvemshop em tempo real (via busca direta por SKU/Barcode)
+            $search = $this->nuvemshop->findProductVariantBySku($sku);
+            if (!$search && $barcode !== '') {
+                $search = $this->nuvemshop->findProductVariantByBarcode($barcode);
             }
+            if (!$search && $sku !== (string)$codigo) {
+                $search = $this->nuvemshop->findProductVariantBySku((string)$codigo);
+            }
+
+            $nuvemProductId = $search ? (string)$search['product']['id'] : null;
+            $nuvemVariantId = $search ? (string)$search['variant']['id'] : null;
 
             if ($nuvemProductId && $nuvemVariantId) {
                 // Produto JÁ existe na Nuvemshop -> Atualiza estoque e preço
                 $upStock = $this->nuvemshop->updateVariantStock($nuvemProductId, $nuvemVariantId, (int)$estoque);
                 if ($precoVenda > 0) {
                     $this->nuvemshop->updateVariantPrice($nuvemProductId, $nuvemVariantId, $precoVenda);
+                }
+                // Se o produto foi deletado na Nuvemshop (404 Not Found)
+                if (!$upStock['success'] && (($upStock['status'] ?? 0) === 404 || str_contains($upStock['error'] ?? '', 'Not Found'))) {
+                    $skipped++;
+                    $itemsLog[] = "Ignorado (produto não existe na Nuvemshop): {$nome}";
+                    continue;
                 }
                 // Se a variante na Nuvemshop não tiver SKU, preenche com o SKU/código do eGestor
                 if (!empty($search['variant']) && trim((string)($search['variant']['sku'] ?? '')) === '') {
@@ -1765,27 +1728,16 @@ class SyncService {
             $nuvemProdId = $item['product_id'] ?? null;
             $egestorId = null;
 
-            // Busca mapeamento do item
-            if (!empty($nuvemVarId)) {
-                $stmt = $db->prepare("SELECT egestor_id FROM product_mappings WHERE nuvemshop_variant_id = ? LIMIT 1");
-                $stmt->execute([(string)$nuvemVarId]);
-                $egestorId = $stmt->fetchColumn() ?: null;
-            }
-
-            if (!$egestorId && $sku !== '') {
-                $stmt = $db->prepare("SELECT egestor_id FROM product_mappings WHERE sku != '' AND sku = ? LIMIT 1");
-                $stmt->execute([$sku]);
-                $egestorId = $stmt->fetchColumn() ?: null;
+            // Busca item no eGestor diretamente em tempo real por SKU ou Código de Barras
+            if ($sku !== '') {
+                $eP = $this->egestor->findProductBySku($sku);
+                if ($eP && !empty($eP['codigo'])) {
+                    $egestorId = (string)$eP['codigo'];
+                }
             }
 
             if (!$egestorId && $barcode !== '') {
-                $stmt = $db->prepare("SELECT egestor_id FROM product_mappings WHERE barcode != '' AND barcode = ? LIMIT 1");
-                $stmt->execute([$barcode]);
-                $egestorId = $stmt->fetchColumn() ?: null;
-            }
-
-            if (!$egestorId && $sku !== '') {
-                $eP = $this->egestor->findProductBySku($sku);
+                $eP = $this->egestor->findProductByBarcode($barcode);
                 if ($eP && !empty($eP['codigo'])) {
                     $egestorId = (string)$eP['codigo'];
                 }
