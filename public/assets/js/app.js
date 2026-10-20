@@ -732,6 +732,29 @@ async function submitFullProduct(e) {
         payload.barcode = document.getElementById('prod-simple-barcode')?.value.trim() || '';
     }
 
+    // Coleta dados fiscais para cadastro no eGestor
+    const ncmVal = (document.getElementById('prod-ncm')?.value || '').trim();
+    const cestVal = (document.getElementById('prod-cest')?.value || '').trim();
+    const origemVal = document.getElementById('prod-origem-fiscal')?.value ?? '0';
+    const unTribVal = document.getElementById('prod-unidade-tributada')?.value || 'UN';
+    const grupoTribVal = (document.getElementById('prod-grupo-tributos')?.value || '1').trim();
+    const benefFiscalVal = (document.getElementById('prod-beneficio-fiscal')?.value || '').trim();
+    const pesoLiqVal = document.getElementById('prod-peso-liquido')?.value;
+    const pesoBrutoVal = document.getElementById('prod-peso-bruto')?.value;
+    const anotacoesNfeVal = (document.getElementById('prod-anotacoes-nfe')?.value || '').trim();
+
+    payload.fiscal = {
+        ncm: ncmVal,
+        cest: cestVal,
+        origem_fiscal: origemVal,
+        unidade_tributada: unTribVal,
+        grupo_tributos: grupoTribVal,
+        beneficio_fiscal: benefFiscalVal,
+        peso_liquido: pesoLiqVal !== '' && pesoLiqVal !== undefined ? parseFloat(pesoLiqVal) : null,
+        peso_bruto: pesoBrutoVal !== '' && pesoBrutoVal !== undefined ? parseFloat(pesoBrutoVal) : null,
+        anotacoes_nfe: anotacoesNfeVal
+    };
+
     const btn = document.getElementById('btn-submit-product');
     const statusBox = document.getElementById('create-product-status-box');
     const statusText = document.getElementById('create-product-status-text');

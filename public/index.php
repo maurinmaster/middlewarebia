@@ -438,7 +438,86 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
               </div>
             </div>
 
-            <!-- Card 4: Fotos (Opcional) -->
+            <!-- Card 4: Dados Fiscais (NF-e & eGestor) -->
+            <div class="product-form-card">
+              <div class="product-form-card-header">
+                <div class="product-form-card-title">🏛️ Dados Fiscais (NF-e & eGestor)</div>
+                <div class="product-form-card-desc">Parâmetros tributários e fiscais cadastrados diretamente no eGestor para emissão automática de NF-e</div>
+              </div>
+              <div class="form-grid-3">
+                <div class="form-group">
+                  <label for="prod-ncm">NCM *</label>
+                  <input type="text" id="prod-ncm" class="form-control" placeholder="Ex: 61069000 ou 6106.90.00" maxlength="12">
+                  <small style="color: var(--text-dim); font-size: 11px;">8 dígitos (obrigatório para emissão de NF-e)</small>
+                </div>
+                <div class="form-group">
+                  <label for="prod-cest">CEST</label>
+                  <input type="text" id="prod-cest" class="form-control" placeholder="Ex: 0100100" maxlength="10">
+                  <small style="color: var(--text-dim); font-size: 11px;">Para produtos com Substituição Tributária</small>
+                </div>
+                <div class="form-group">
+                  <label for="prod-origem-fiscal">Origem da Mercadoria</label>
+                  <select id="prod-origem-fiscal" class="form-control">
+                    <option value="0" selected>0 - Nacional</option>
+                    <option value="1">1 - Estrangeira (Importação direta)</option>
+                    <option value="2">2 - Estrangeira (Adquirida no mercado interno)</option>
+                    <option value="3">3 - Nacional (Conteúdo importação > 40%)</option>
+                    <option value="4">4 - Nacional (Produção conforme processos básicos)</option>
+                    <option value="5">5 - Nacional (Conteúdo importação &le; 40%)</option>
+                    <option value="6">6 - Estrangeira (Importação direta s/ similar)</option>
+                    <option value="7">7 - Estrangeira (Mercado interno s/ similar)</option>
+                    <option value="8">8 - Nacional (Conteúdo importação > 70%)</option>
+                  </select>
+                  <small style="color: var(--text-dim); font-size: 11px;">Origem fiscal da mercadoria</small>
+                </div>
+              </div>
+
+              <div class="form-grid-3" style="margin-top: 10px;">
+                <div class="form-group">
+                  <label for="prod-unidade-tributada">Unidade Tributada</label>
+                  <select id="prod-unidade-tributada" class="form-control">
+                    <option value="UN" selected>UN - Unidade</option>
+                    <option value="PC">PC - Peça</option>
+                    <option value="PAR">PAR - Par</option>
+                    <option value="KG">KG - Quilograma</option>
+                    <option value="MT">MT - Metro</option>
+                    <option value="CX">CX - Caixa</option>
+                    <option value="KIT">KIT - Conjunto / Kit</option>
+                  </select>
+                  <small style="color: var(--text-dim); font-size: 11px;">Unidade na nota fiscal</small>
+                </div>
+                <div class="form-group">
+                  <label for="prod-grupo-tributos">Cód. Regra/Grupo Tributos</label>
+                  <input type="text" id="prod-grupo-tributos" class="form-control" value="1" placeholder="Ex: 1">
+                  <small style="color: var(--text-dim); font-size: 11px;">ID do Grupo de Tributos no eGestor</small>
+                </div>
+                <div class="form-group">
+                  <label for="prod-beneficio-fiscal">Benefício Fiscal (cBenef)</label>
+                  <input type="text" id="prod-beneficio-fiscal" class="form-control" placeholder="Ex: RS051000 (se houver)">
+                  <small style="color: var(--text-dim); font-size: 11px;">Código benefício estadual</small>
+                </div>
+              </div>
+
+              <div class="form-grid-2" style="margin-top: 10px;">
+                <div class="form-group">
+                  <label for="prod-peso-liquido">Peso Líquido (kg)</label>
+                  <input type="number" step="0.001" min="0" id="prod-peso-liquido" class="form-control" placeholder="0.250">
+                  <small style="color: var(--text-dim); font-size: 11px;">Peso do item sem embalagem</small>
+                </div>
+                <div class="form-group">
+                  <label for="prod-peso-bruto">Peso Bruto (kg)</label>
+                  <input type="number" step="0.001" min="0" id="prod-peso-bruto" class="form-control" placeholder="0.300">
+                  <small style="color: var(--text-dim); font-size: 11px;">Peso com embalagem para cálculo de frete/NF</small>
+                </div>
+              </div>
+
+              <div class="form-group" style="margin-bottom: 0; margin-top: 10px;">
+                <label for="prod-anotacoes-nfe">Anotações Adicionais para a NF-e (Opcional)</label>
+                <input type="text" id="prod-anotacoes-nfe" class="form-control" placeholder="Ex: Inf. Adicionais do Produto impressas na nota fiscal...">
+              </div>
+            </div>
+
+            <!-- Card 5: Fotos (Opcional) -->
             <div class="product-form-card">
               <div class="product-form-card-header">
                 <div class="product-form-card-title">🖼️ Fotos do Produto (Opcional)</div>

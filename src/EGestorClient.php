@@ -239,6 +239,38 @@ class EGestorClient {
             $payload['anotacoesInternas'] = trim((string)$data['anotacoesInternas']);
         }
 
+        // Dados Fiscais para NF-e no eGestor
+        if (!empty($data['ncm'])) {
+            $payload['ncm'] = preg_replace('/\D/', '', (string)$data['ncm']);
+        }
+        if (!empty($data['codigoCEST']) || !empty($data['cest'])) {
+            $payload['codigoCEST'] = preg_replace('/\D/', '', (string)($data['codigoCEST'] ?? $data['cest']));
+        }
+        if (isset($data['origemFiscal']) && $data['origemFiscal'] !== '') {
+            $payload['origemFiscal'] = (int)$data['origemFiscal'];
+        }
+        if (!empty($data['unidadeTributada'])) {
+            $payload['unidadeTributada'] = strtoupper(trim((string)$data['unidadeTributada']));
+        }
+        if (!empty($data['codigoGrupoTributos']) || !empty($data['grupoTributos'])) {
+            $payload['codigoGrupoTributos'] = trim((string)($data['codigoGrupoTributos'] ?? $data['grupoTributos']));
+        }
+        if (!empty($data['codigoBeneficioFiscal']) || !empty($data['beneficioFiscal'])) {
+            $payload['codigoBeneficioFiscal'] = trim((string)($data['codigoBeneficioFiscal'] ?? $data['beneficioFiscal']));
+        }
+        if (!empty($data['excecaoIPI'])) {
+            $payload['excecaoIPI'] = trim((string)$data['excecaoIPI']);
+        }
+        if (!empty($data['anotacoesNFE']) || !empty($data['anotacoesNfe'])) {
+            $payload['anotacoesNFE'] = trim((string)($data['anotacoesNFE'] ?? $data['anotacoesNfe']));
+        }
+        if (isset($data['pesoLiquido']) && $data['pesoLiquido'] !== '') {
+            $payload['pesoLiquido'] = (float)$data['pesoLiquido'];
+        }
+        if (isset($data['pesoBruto']) && $data['pesoBruto'] !== '') {
+            $payload['pesoBruto'] = (float)$data['pesoBruto'];
+        }
+
         Logger::info("Criando produto no eGestor: '{$payload['descricao']}'", ['payload' => $payload]);
         return $this->request('POST', '/produtos', $payload);
     }

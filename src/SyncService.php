@@ -1218,14 +1218,29 @@ class SyncService {
         $hasVariants = !empty($data['has_variants']) && !empty($data['variants']);
         $images = !empty($data['images']) && is_array($data['images']) ? $data['images'] : [];
 
+        // Extrai dados fiscais informados para a emissão de NF-e no eGestor
+        $fiscal = (array)($data['fiscal'] ?? []);
+        $fiscalData = [
+            'ncm' => $fiscal['ncm'] ?? ($data['ncm'] ?? null),
+            'codigoCEST' => $fiscal['cest'] ?? ($fiscal['codigoCEST'] ?? ($data['cest'] ?? null)),
+            'origemFiscal' => isset($fiscal['origem_fiscal']) ? $fiscal['origem_fiscal'] : (isset($fiscal['origemFiscal']) ? $fiscal['origemFiscal'] : ($data['origem_fiscal'] ?? null)),
+            'unidadeTributada' => $fiscal['unidade_tributada'] ?? ($fiscal['unidadeTributada'] ?? ($data['unidade_tributada'] ?? null)),
+            'codigoGrupoTributos' => $fiscal['grupo_tributos'] ?? ($fiscal['codigoGrupoTributos'] ?? ($data['grupo_tributos'] ?? null)),
+            'codigoBeneficioFiscal' => $fiscal['beneficio_fiscal'] ?? ($fiscal['codigoBeneficioFiscal'] ?? ($data['beneficio_fiscal'] ?? null)),
+            'anotacoesNFE' => $fiscal['anotacoes_nfe'] ?? ($fiscal['anotacoesNFE'] ?? ($data['anotacoes_nfe'] ?? null)),
+            'pesoLiquido' => $fiscal['peso_liquido'] ?? ($fiscal['pesoLiquido'] ?? ($data['peso_liquido'] ?? null)),
+            'pesoBruto' => $fiscal['peso_bruto'] ?? ($fiscal['pesoBruto'] ?? ($data['peso_bruto'] ?? null))
+        ];
+        $fiscalData = array_filter($fiscalData, fn($val) => $val !== null && $val !== '');
+
         // CASO 1: PRODUTO SIMPLES (Sem Variações)
         if (!$hasVariants) {
             $stock = (float)($data['stock'] ?? 0);
             $sku = trim((string)($data['sku'] ?? ''));
             $barcode = trim((string)($data['barcode'] ?? ''));
 
-            // 1. Cria primeiro no eGestor
-            $eData = [
+            // 1. Cria primeiro no eGestor com dados fiscais
+            $eData = array_merge([
                 'descricao' => $name,
                 'precoVenda' => $price,
                 'precoCusto' => $costPrice,
@@ -1233,9 +1248,9 @@ class SyncService {
                 'codigoProprio' => $sku,
                 'refEanGtin' => $barcode,
                 'anotacoesInternas' => "Cadastrado via Middleware Bia"
-            ];
+            ], $fiscalData);
 
-            Logger::info("Cadastrando produto simples no eGestor: '{$name}'...");
+            Logger::info("Cadastrando produto simples no eGestor: '{$name}' com dados fiscais...", ['fiscal' => $fiscalData]);
             $eRes = $this->egestor->createProduct($eData);
             if (!$eRes['success'] || empty($eRes['data']['codigo'])) {
                 $err = $eRes['error'] ?? 'Falha ao cadastrar produto no eGestor';
@@ -1320,8 +1335,8 @@ class SyncService {
             $varSku = trim((string)($v['sku'] ?? ''));
             $varBarcode = trim((string)($v['barcode'] ?? ''));
 
-            // Cria o produto individual no eGestor (PDV)
-            $eData = [
+            // Cria o produto individual no eGestor (PDV) com dados fiscais
+            $eData = array_merge([
                 'descricao' => $varName,
                 'precoVenda' => $varPrice,
                 'precoCusto' => $varCost,
@@ -1329,7 +1344,7 @@ class SyncService {
                 'codigoProprio' => $varSku,
                 'refEanGtin' => $varBarcode,
                 'anotacoesInternas' => "Grade: " . implode(' / ', $rawValues)
-            ];
+            ], $fiscalData);
 
             Logger::info("Criando variação no eGestor: '{$varName}' (Estoque: {$varStock})...");
             $eRes = $this->egestor->createProduct($eData);
