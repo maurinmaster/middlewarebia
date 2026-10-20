@@ -1586,6 +1586,20 @@ class SyncService {
 
         if (!$createRes['success'] || empty($createRes['data']['id'])) {
             $err = $createRes['error'] ?? 'Falha ao criar produto unificado na Nuvemshop';
+            if (!empty($createRes['data']) && is_array($createRes['data'])) {
+                $details = [];
+                foreach ($createRes['data'] as $k => $v) {
+                    if ($k === 'message' || $k === 'description') continue;
+                    if (is_array($v)) {
+                        $details[] = "{$k}: " . json_encode($v, JSON_UNESCAPED_UNICODE);
+                    } else {
+                        $details[] = "{$k}: {$v}";
+                    }
+                }
+                if (!empty($details)) {
+                    $err .= " [" . implode('; ', $details) . "]";
+                }
+            }
             Logger::error("Erro na criação de produto unificado: {$err}", ['body' => $createRes['data'] ?? []]);
             return ['success' => false, 'error' => $err];
         }

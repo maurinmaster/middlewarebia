@@ -66,7 +66,9 @@ class EGestorClient {
             CURLOPT_URL => $this->authUrl,
             CURLOPT_POST => true,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 15,
+            CURLOPT_TIMEOUT => 20,
+            CURLOPT_CONNECTTIMEOUT => 8,
+            CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4,
             CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
             CURLOPT_POSTFIELDS => json_encode([
                 'grant_type' => 'personal',
@@ -119,7 +121,9 @@ class EGestorClient {
         $options = [
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 20,
+            CURLOPT_TIMEOUT => 25,
+            CURLOPT_CONNECTTIMEOUT => 8,
+            CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4,
             CURLOPT_CUSTOMREQUEST => strtoupper($method),
             CURLOPT_HTTPHEADER => $headers
         ];
@@ -136,7 +140,12 @@ class EGestorClient {
 
         if ($curlError) {
             Logger::error("Erro cURL eGestor [{$method} {$endpoint}]: {$curlError}");
-            throw new \Exception("Falha na conexão cURL com eGestor: {$curlError}");
+            return [
+                'success' => false,
+                'status' => 0,
+                'error' => "Falha na conexão com eGestor: {$curlError}",
+                'data' => null
+            ];
         }
 
         $decoded = json_decode($response, true);

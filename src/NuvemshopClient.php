@@ -30,7 +30,9 @@ class NuvemshopClient {
         $options = [
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT => 20,
+            CURLOPT_TIMEOUT => 25,
+            CURLOPT_CONNECTTIMEOUT => 8,
+            CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4,
             CURLOPT_CUSTOMREQUEST => strtoupper($method),
             CURLOPT_HTTPHEADER => $headers
         ];
@@ -47,7 +49,12 @@ class NuvemshopClient {
 
         if ($curlError) {
             Logger::error("Erro cURL Nuvemshop [{$method} {$endpoint}]: {$curlError}");
-            throw new \Exception("Falha na requisição cURL: {$curlError}");
+            return [
+                'success' => false,
+                'status' => 0,
+                'error' => "Falha na conexão com Nuvemshop: {$curlError}",
+                'data' => null
+            ];
         }
 
         $decoded = json_decode($response, true);

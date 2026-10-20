@@ -1620,6 +1620,8 @@ async function submitUnifyProducts() {
     }
 
     const variants = [];
+    const seenCombos = new Set();
+
     for (const r of rows) {
         const egestorId = r.getAttribute('data-egestor-id');
         const attr1Val = (r.querySelector('.unify-item-attr1')?.value || '').trim();
@@ -1640,6 +1642,13 @@ async function submitUnifyProducts() {
             }
             values.push(attr2Val);
         }
+
+        const comboKey = values.map(v => v.trim().toLowerCase()).join('|||');
+        if (seenCombos.has(comboKey)) {
+            showToast(`Combinação repetida: "${values.join(' / ')}". Cada produto unificado precisa ter uma cor ou tamanho diferente!`, 'warning');
+            return;
+        }
+        seenCombos.add(comboKey);
 
         variants.push({
             egestor_id: egestorId,
@@ -1675,12 +1684,18 @@ async function submitUnifyProducts() {
         `;
     }
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
+
     try {
         const res = await fetch('api.php?action=create_unified_product', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            body: JSON.stringify(payload),
+            signal: controller.signal
         });
+        clearTimeout(timeoutId);
+
         const data = await res.json();
 
         if (data.success) {
@@ -1712,12 +1727,17 @@ async function submitUnifyProducts() {
             }
         }
     } catch (err) {
-        showToast('Erro de comunicação ao enviar dados para a API.', 'error');
+        clearTimeout(timeoutId);
+        let errorMsg = 'Falha ao se comunicar com o servidor.';
+        if (err.name === 'AbortError') {
+            errorMsg = 'A requisição demorou mais de 45 segundos e foi cancelada. Verifique se o anúncio foi criado na Nuvemshop.';
+        }
+        showToast(errorMsg, 'error');
         if (statusBox) {
             statusBox.style.background = '#fef2f2';
             statusBox.style.border = '1px solid #fecaca';
             statusBox.style.color = '#991b1b';
-            statusBox.innerHTML = `❌ <strong>Erro de conexão:</strong> Falha ao se comunicar com o servidor.`;
+            statusBox.innerHTML = `❌ <strong>Erro:</strong> ${escapeHtml(errorMsg)}`;
         }
     } finally {
         btn.disabled = false;
