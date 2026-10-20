@@ -14,6 +14,109 @@ class SyncService {
     }
 
     /**
+     * Cache em memória do catálogo da Nuvemshop para validações 100% em tempo real sem banco
+     */
+    private ?array $nuvemshopProductsIndex = null;
+
+    /**
+     * Limpa o cache transitório da Nuvemshop
+     */
+    public function clearNuvemshopCache(): void {
+        $this->nuvemshopProductsIndex = null;
+        $cacheFile = sys_get_temp_dir() . '/bia_nuvemshop_products_cache.json';
+        if (file_exists($cacheFile)) {
+            @unlink($cacheFile);
+        }
+    }
+
+    /**
+     * Retorna o catálogo da Nuvemshop em tempo real (direto da API) indexado por SKU e Código de Barras
+     */
+    public function getNuvemshopProductsIndex(bool $forceRefresh = false): array {
+        if ($this->nuvemshopProductsIndex !== null && !$forceRefresh) {
+            return $this->nuvemshopProductsIndex;
+        }
+
+        $cacheFile = sys_get_temp_dir() . '/bia_nuvemshop_products_cache.json';
+        if (!$forceRefresh && file_exists($cacheFile) && (time() - filemtime($cacheFile) < 15)) {
+            $cached = json_decode((string)@file_get_contents($cacheFile), true);
+            if (is_array($cached) && isset($cached['by_sku'])) {
+                $this->nuvemshopProductsIndex = $cached;
+                return $cached;
+            }
+        }
+
+        Logger::info("Buscando produtos em tempo real na API da Nuvemshop...");
+        $allProducts = [];
+        $page = 1;
+        $perPage = 200;
+
+        do {
+            $res = $this->nuvemshop->getProducts($page, $perPage);
+            if (!$res['success'] || !is_array($res['data'])) {
+                break;
+            }
+            $batch = $res['data'];
+            $allProducts = array_merge($allProducts, $batch);
+            if (count($batch) < $perPage) {
+                break;
+            }
+            $page++;
+        } while ($page <= 10);
+
+        $bySku = [];
+        $byBarcode = [];
+        $byId = [];
+
+        foreach ($allProducts as $p) {
+            $pId = (string)($p['id'] ?? '');
+            $pName = is_array($p['name']) ? ($p['name']['pt'] ?? reset($p['name'])) : (string)($p['name'] ?? '');
+            $byId[$pId] = $p;
+
+            $variants = $p['variants'] ?? [];
+            foreach ($variants as $v) {
+                $vId = (string)($v['id'] ?? '');
+                $vSku = trim((string)($v['sku'] ?? ''));
+                $vBarcode = trim((string)($v['barcode'] ?? ''));
+                $vStock = (float)($v['stock'] ?? 0);
+                $vPrice = (float)($v['price'] ?? 0);
+
+                $itemInfo = [
+                    'product_id' => $pId,
+                    'variant_id' => $vId,
+                    'sku' => $vSku,
+                    'barcode' => $vBarcode,
+                    'stock' => $vStock,
+                    'price' => $vPrice,
+                    'name' => $pName
+                ];
+
+                if ($vSku !== '') {
+                    $bySku[$vSku] = $itemInfo;
+                }
+                if ($vBarcode !== '') {
+                    $byBarcode[$vBarcode] = $itemInfo;
+                }
+            }
+        }
+
+        $index = [
+            'total' => count($allProducts),
+            'products' => $allProducts,
+            'by_sku' => $bySku,
+            'by_barcode' => $byBarcode,
+            'by_id' => $byId,
+            'timestamp' => time()
+        ];
+
+        $this->nuvemshopProductsIndex = $index;
+        @file_put_contents($cacheFile, json_encode($index));
+
+        Logger::info("Catálogo Nuvemshop em tempo real carregado: " . count($allProducts) . " produtos ativos.");
+        return $index;
+    }
+
+    /**
      * Processa webhook recebido do eGestor (PDV)
      */
     public function handleEGestorWebhook(array $payload): array {
@@ -577,48 +680,12 @@ class SyncService {
     }
 
     /**
-     * Salva ou atualiza mapeamento na tabela SQLite
+     * Salva ou atualiza mapeamento (desativado para não armazenar produtos no banco local)
+     * Conforme solicitação: dados ficam 100% em tempo real via APIs do eGestor e Nuvemshop.
      */
     private function saveMapping(array $data): void {
-        $db = Database::getConnection();
-
-        // Verifica se já existe por egestor_id, SKU ou variant_id
-        $egestorId = $data['egestor_id'] ?? '';
-        $sku = $data['sku'] ?? '';
-        $varId = $data['nuvemshop_variant_id'] ?? '';
-
-        $sqlCheck = "SELECT id FROM product_mappings WHERE (egestor_id != '' AND egestor_id = :egestor_id) OR (sku != '' AND sku = :sku) OR (nuvemshop_variant_id != '' AND nuvemshop_variant_id = :var_id) LIMIT 1";
-        $stmtCheck = $db->prepare($sqlCheck);
-        $stmtCheck->execute([
-            ':egestor_id' => $egestorId,
-            ':sku' => $sku,
-            ':var_id' => $varId
-        ]);
-        $existingId = $stmtCheck->fetchColumn();
-
-        if ($existingId) {
-            $fields = [];
-            $params = [':id' => $existingId];
-            foreach ($data as $col => $val) {
-                $fields[] = "{$col} = :{$col}";
-                $params[":{$col}"] = $val;
-            }
-            $fields[] = "updated_at = CURRENT_TIMESTAMP";
-            $fields[] = "last_sync_at = CURRENT_TIMESTAMP";
-
-            $updateSql = "UPDATE product_mappings SET " . implode(', ', $fields) . " WHERE id = :id";
-            $stmt = $db->prepare($updateSql);
-            $stmt->execute($params);
-        } else {
-            $cols = array_keys($data);
-            $cols[] = 'last_sync_at';
-            $placeholders = array_map(fn($c) => ":{$c}", array_keys($data));
-            $placeholders[] = 'CURRENT_TIMESTAMP';
-
-            $insertSql = "INSERT INTO product_mappings (" . implode(', ', $cols) . ") VALUES (" . implode(', ', $placeholders) . ")";
-            $stmt = $db->prepare($insertSql);
-            $stmt->execute($data);
-        }
+        // Limpa cache transitório em memória/disco para refletir a alteração imediatamente
+        $this->clearNuvemshopCache();
     }
 
     /**
@@ -949,86 +1016,111 @@ class SyncService {
      */
     public function getEGestorVsNuvemProducts(int $page = 1, string $filter = '', string|bool $statusFilter = 'all', string $stockFilter = 'all'): array {
         try {
-            $db = Database::getConnection();
-
             // Normaliza statusFilter
             if (is_bool($statusFilter)) {
                 $statusFilter = $statusFilter ? 'missing' : 'all';
             }
 
+            // Obtém índice atualizado em tempo real da Nuvemshop
+            $nuvemIndex = $this->getNuvemshopProductsIndex();
+
             // CASO 1: Filtrar apenas os produtos JÁ CADASTRADOS na Nuvemshop
-            // Consulta diretamente a base local de mapeamentos (instantâneo e com paginação real sobre os produtos na Nuvemshop)
+            // Carrega em TEMPO REAL direto da Nuvemshop (sem dados fantasmas no banco)
             if ($statusFilter === 'in_nuvem') {
-                $where = ["nuvemshop_product_id IS NOT NULL AND nuvemshop_product_id != '' AND (status != 'removed_from_nuvem' OR status IS NULL)"];
-                $queryParams = [];
+                $rawNuvemProducts = $nuvemIndex['products'];
+                $filteredItems = [];
 
-                if ($filter !== '') {
-                    $where[] = "(name LIKE :q OR sku LIKE :q OR barcode LIKE :q OR egestor_id LIKE :q)";
-                    $queryParams[':q'] = "%{$filter}%";
+                foreach ($rawNuvemProducts as $p) {
+                    $pId = (string)($p['id'] ?? '');
+                    $pName = is_array($p['name']) ? ($p['name']['pt'] ?? reset($p['name'])) : (string)($p['name'] ?? '');
+                    $variants = $p['variants'] ?? [];
+
+                    foreach ($variants as $v) {
+                        $vSku = trim((string)($v['sku'] ?? ''));
+                        $vBarcode = trim((string)($v['barcode'] ?? ''));
+                        $vStock = (float)($v['stock'] ?? 0);
+                        $vPrice = (float)($v['price'] ?? 0);
+
+                        // Filtro de texto (nome, SKU, barcode, ID)
+                        if ($filter !== '') {
+                            $matchText = (stripos($pName, $filter) !== false) ||
+                                         ($vSku !== '' && stripos($vSku, $filter) !== false) ||
+                                         ($vBarcode !== '' && stripos($vBarcode, $filter) !== false) ||
+                                         (stripos($pId, $filter) !== false);
+                            if (!$matchText) {
+                                continue;
+                            }
+                        }
+
+                        // Filtro de estoque na Nuvemshop
+                        if ($stockFilter === 'has_stock' && $vStock <= 0) {
+                            continue;
+                        } elseif ($stockFilter === 'zero_stock' && $vStock > 0) {
+                            continue;
+                        } elseif ($stockFilter === 'low_stock' && ($vStock <= 0 || $vStock > 3)) {
+                            continue;
+                        }
+
+                        $filteredItems[] = [
+                            'sku' => $vSku,
+                            'barcode' => $vBarcode,
+                            'pId' => $pId,
+                            'vId' => (string)($v['id'] ?? ''),
+                            'pName' => $pName,
+                            'vStock' => $vStock,
+                            'vPrice' => $vPrice
+                        ];
+                    }
                 }
 
-                if ($stockFilter === 'has_stock') {
-                    $where[] = "(stock_nuvemshop > 0 OR stock_egestor > 0)";
-                } elseif ($stockFilter === 'zero_stock') {
-                    $where[] = "(stock_nuvemshop <= 0 AND stock_egestor <= 0)";
-                } elseif ($stockFilter === 'low_stock') {
-                    $where[] = "((stock_nuvemshop > 0 AND stock_nuvemshop <= 3) OR (stock_egestor > 0 AND stock_egestor <= 3))";
-                }
-
-                $whereSql = implode(' AND ', $where);
-
-                $stmtCount = $db->prepare("SELECT COUNT(*) FROM product_mappings WHERE {$whereSql}");
-                foreach ($queryParams as $k => $v) {
-                    $stmtCount->bindValue($k, $v);
-                }
-                $stmtCount->execute();
-                $totalNuvem = (int)$stmtCount->fetchColumn();
-
+                $totalNuvem = count($filteredItems);
                 $perPage = 50;
                 $lastPage = max(1, (int)ceil($totalNuvem / $perPage));
                 $offset = ($page - 1) * $perPage;
-
-                $stmt = $db->prepare("SELECT * FROM product_mappings WHERE {$whereSql} ORDER BY id DESC LIMIT :limit OFFSET :offset");
-                foreach ($queryParams as $k => $v) {
-                    $stmt->bindValue($k, $v);
-                }
-                $stmt->bindValue(':limit', $perPage, \PDO::PARAM_INT);
-                $stmt->bindValue(':offset', $offset, \PDO::PARAM_INT);
-                $stmt->execute();
-                $rows = $stmt->fetchAll();
+                $pagedSlice = array_slice($filteredItems, $offset, $perPage);
 
                 $items = [];
-                foreach ($rows as $r) {
-                    $eId = $r['egestor_id'];
+                foreach ($pagedSlice as $sliceItem) {
+                    $sku = $sliceItem['sku'];
+                    $barcode = $sliceItem['barcode'];
+                    $pId = $sliceItem['pId'];
+                    $vId = $sliceItem['vId'];
+                    $pName = $sliceItem['pName'];
+                    $vStock = $sliceItem['vStock'];
+                    $vPrice = $sliceItem['vPrice'];
+
+                    // Busca em tempo real no eGestor para obter dados fiscais e estoque no PDV
                     $eProd = null;
-                    if (!empty($eId)) {
-                        $eRes = $this->egestor->getProduct($eId);
-                        if (!empty($eRes['success']) && !empty($eRes['data'])) {
-                            $eProd = $eRes['data'];
-                        }
+                    if ($sku !== '') {
+                        $eProd = $this->egestor->findProductBySku($sku);
+                    }
+                    if (!$eProd && $barcode !== '') {
+                        $eProd = $this->egestor->findProductByBarcode($barcode);
                     }
 
+                    $eCodigo = $eProd ? (string)($eProd['codigo'] ?? $sku) : $sku;
+                    $eEstoque = $eProd ? (float)($eProd['estoque'] ?? 0) : 0.0;
                     $ncm = trim((string)($eProd['ncm'] ?? ''));
                     $cest = trim((string)($eProd['codigoCEST'] ?? ''));
                     $origemFiscal = trim((string)($eProd['origemFiscal'] ?? '0'));
                     $unidade = trim((string)($eProd['unidadeTributada'] ?? 'UN'));
-                    $precoCusto = (float)($eProd['precoCusto'] ?? $r['price'] ?? 0);
-                    $gtin = trim((string)($eProd['refEanGtin'] ?? $r['barcode'] ?? ''));
+                    $precoCusto = (float)($eProd['precoCusto'] ?? 0);
+                    $gtin = trim((string)($eProd['refEanGtin'] ?? $barcode));
                     $gtinUpper = strtoupper($gtin);
                     $gtinTributavel = ($gtin === '' || $gtinUpper === 'SEM GTIN' || $gtinUpper === 'SEM_GTIN' || $gtin === '0') ? '' : $gtin;
 
                     $items[] = [
-                        'codigo' => $r['egestor_id'] ?: $r['sku'],
-                        'sku' => $r['sku'] ?: $r['egestor_id'],
-                        'nome' => $r['name'],
-                        'barcode' => $r['barcode'] ?: '',
-                        'estoque' => (float)($r['stock_egestor'] ?? 0),
-                        'preco' => (float)($r['price'] ?? 0),
+                        'codigo' => $eCodigo ?: $sku,
+                        'sku' => $sku ?: $eCodigo,
+                        'nome' => $pName,
+                        'barcode' => $barcode,
+                        'estoque' => $eEstoque,
+                        'preco' => $vPrice,
                         'in_nuvemshop' => true,
-                        'nuvemshop_product_id' => $r['nuvemshop_product_id'],
-                        'nuvemshop_variant_id' => $r['nuvemshop_variant_id'],
-                        'stock_nuvemshop' => (float)($r['stock_nuvemshop'] ?? 0),
-                        // DADOS FISCAIS
+                        'nuvemshop_product_id' => $pId,
+                        'nuvemshop_variant_id' => $vId,
+                        'stock_nuvemshop' => $vStock,
+                        // DADOS FISCAIS EM TEMPO REAL
                         'ncm' => $ncm,
                         'cest' => $cest,
                         'origem_fiscal' => $origemFiscal,
@@ -1072,42 +1164,6 @@ class SyncService {
             $totalEGestor = (int)($res['data']['total'] ?? 0);
             $lastPage = (int)($res['data']['last_page'] ?? 1);
 
-            // Indexa produtos retornados para checar existência no banco local de forma rápida
-            $codigos = [];
-            $skus = [];
-            foreach ($rawProducts as $p) {
-                if (!empty($p['codigo'])) {
-                    $c = (string)$p['codigo'];
-                    $codigos[] = $c;
-                    $rawSku = trim((string)($p['codigoProprio'] ?? ''));
-                    $skus[] = $rawSku !== '' ? $rawSku : $c;
-                }
-            }
-
-            $mappedByEGestorId = [];
-            $mappedBySku = [];
-
-            if (!empty($codigos) || !empty($skus)) {
-                $inCodigos = !empty($codigos) ? implode(',', array_fill(0, count($codigos), '?')) : 'NULL';
-                $inSkus = !empty($skus) ? implode(',', array_fill(0, count($skus), '?')) : 'NULL';
-                
-                $paramsQuery = array_merge($codigos, $skus);
-                $stmt = $db->prepare("SELECT egestor_id, nuvemshop_product_id, nuvemshop_variant_id, sku, barcode, status, stock_nuvemshop FROM product_mappings 
-                    WHERE (egestor_id IN ({$inCodigos}) OR (sku != '' AND sku IN ({$inSkus})))
-                    AND nuvemshop_product_id IS NOT NULL AND nuvemshop_product_id != '' AND status != 'removed_from_nuvem'");
-                $stmt->execute($paramsQuery);
-                $mappings = $stmt->fetchAll();
-
-                foreach ($mappings as $m) {
-                    if (!empty($m['egestor_id'])) {
-                        $mappedByEGestorId[$m['egestor_id']] = $m;
-                    }
-                    if (!empty($m['sku'])) {
-                        $mappedBySku[$m['sku']] = $m;
-                    }
-                }
-            }
-
             $items = [];
             foreach ($rawProducts as $p) {
                 $codigo = (string)($p['codigo'] ?? '');
@@ -1120,8 +1176,17 @@ class SyncService {
                 $upperBarcode = strtoupper($rawBarcode);
                 $barcode = ($rawBarcode === '' || $upperBarcode === 'SEM GTIN' || $upperBarcode === 'SEM_GTIN' || $rawBarcode === '0') ? '' : $rawBarcode;
 
-                $mapping = $mappedByEGestorId[$codigo] ?? ($sku !== '' ? ($mappedBySku[$sku] ?? null) : null);
-                $inNuvem = !empty($mapping['nuvemshop_product_id']);
+                // Checagem em TEMPO REAL contra a Nuvemshop (sem tabela de banco desatualizada)
+                $nuvemMatch = null;
+                if ($sku !== '' && isset($nuvemIndex['by_sku'][$sku])) {
+                    $nuvemMatch = $nuvemIndex['by_sku'][$sku];
+                } elseif (isset($nuvemIndex['by_sku'][$codigo])) {
+                    $nuvemMatch = $nuvemIndex['by_sku'][$codigo];
+                } elseif ($barcode !== '' && isset($nuvemIndex['by_barcode'][$barcode])) {
+                    $nuvemMatch = $nuvemIndex['by_barcode'][$barcode];
+                }
+
+                $inNuvem = !empty($nuvemMatch);
 
                 // Filtro de Status na Nuvemshop
                 if ($statusFilter === 'missing' && $inNuvem) {
@@ -1166,9 +1231,9 @@ class SyncService {
                     'estoque' => $estoque,
                     'preco' => $preco,
                     'in_nuvemshop' => $inNuvem,
-                    'nuvemshop_product_id' => $mapping['nuvemshop_product_id'] ?? null,
-                    'nuvemshop_variant_id' => $mapping['nuvemshop_variant_id'] ?? null,
-                    'stock_nuvemshop' => $mapping['stock_nuvemshop'] ?? null,
+                    'nuvemshop_product_id' => $nuvemMatch['product_id'] ?? null,
+                    'nuvemshop_variant_id' => $nuvemMatch['variant_id'] ?? null,
+                    'stock_nuvemshop' => $nuvemMatch['stock'] ?? null,
                     // DADOS FISCAIS
                     'ncm' => $ncm,
                     'cest' => $cest,

@@ -37,8 +37,10 @@ try {
             $nuvemStatus = $nuvemshop->testConnection();
             $egestorStatus = $egestor->testConnection();
 
-            $totalMapped = (int)$db->query("SELECT COUNT(*) FROM product_mappings")->fetchColumn();
-            $lastSync = $db->query("SELECT MAX(last_sync_at) FROM product_mappings")->fetchColumn();
+            // Total em tempo real na Nuvemshop (sem depender de tabela de banco)
+            $nuvemIndex = $syncService->getNuvemshopProductsIndex();
+            $totalMapped = (int)($nuvemIndex['total'] ?? 0);
+            $lastSync = $db->query("SELECT MAX(created_at) FROM sync_logs WHERE status = 'success'")->fetchColumn();
             $recentErrors = (int)$db->query("SELECT COUNT(*) FROM sync_logs WHERE status = 'error' AND created_at >= datetime('now', '-24 hours')")->fetchColumn();
 
             echo json_encode([
