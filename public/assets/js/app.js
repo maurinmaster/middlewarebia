@@ -1008,7 +1008,7 @@ async function executeExcelExport() {
             return;
         }
 
-        // Formata as linhas para o Excel com nomes claros em português
+        // Formata as linhas para o Excel com nomes claros em português e dados fiscais completos
         const excelRows = productsToExport.map(p => {
             const estoquePDV = Number(p.estoque ?? 0);
             const estoqueNuvem = p.in_nuvemshop && p.stock_nuvemshop !== null && p.stock_nuvemshop !== undefined
@@ -1018,15 +1018,26 @@ async function executeExcelExport() {
             return {
                 'Código eGestor': p.codigo || '',
                 'SKU': p.sku || '',
-                'Código de Barras (EAN)': p.barcode || '',
+                'Código de Barras (EAN/GTIN)': p.barcode || '',
                 'Descrição / Nome do Produto': p.nome || '',
+                'NCM': p.ncm || '',
+                'CEST': p.cest || '',
+                'Origem Fiscal': p.origem_fiscal_desc || (p.origem_fiscal !== undefined && p.origem_fiscal !== '' ? String(p.origem_fiscal) : '0 - Nacional'),
+                'Unidade Tributada': p.unidade_tributada || 'UN',
+                'GTIN Tributável': p.gtin_tributavel || p.barcode || '',
+                'Preço de Custo (R$)': Number(p.preco_custo || 0),
+                'Preço de Venda (R$)': Number(p.preco || 0),
                 'Estoque PDV (eGestor)': estoquePDV,
                 'Estoque Nuvemshop': estoqueNuvem,
-                'Preço Venda (R$)': Number(p.preco || 0),
                 'Status Nuvemshop': p.in_nuvemshop ? 'Cadastrado na Nuvemshop' : 'Não Enviado',
+                'Regra / Grupo Tributos': p.grupo_tributos || '',
+                'Benefício Fiscal': p.beneficio_fiscal || '',
+                'Exceção IPI': p.excecao_ipi || '',
+                'Peso Líquido (kg)': Number(p.peso_liquido || 0),
+                'Peso Bruto (kg)': Number(p.peso_bruto || 0),
+                'Anotações Fiscais (NF-e)': p.anotacoes_nfe || '',
                 'ID Produto Nuvemshop': p.nuvemshop_product_id || '',
-                'ID Variação Nuvemshop': p.nuvemshop_variant_id || '',
-                'Última Sincronização': p.last_sync_at || ''
+                'ID Variação Nuvemshop': p.nuvemshop_variant_id || ''
             };
         });
 

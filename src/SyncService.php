@@ -924,8 +924,28 @@ class SyncService {
     }
 
     /**
+     * Formata a descrição da Origem Fiscal da mercadoria (SEFAZ / NF-e)
+     */
+    public static function formatOrigemFiscal($origem): string {
+        $origem = trim((string)$origem);
+        $map = [
+            '0' => '0 - Nacional',
+            '1' => '1 - Estrangeira (Importação direta)',
+            '2' => '2 - Estrangeira (Adquirida no mercado interno)',
+            '3' => '3 - Nacional (Conteúdo de Importação > 40% e <= 70%)',
+            '4' => '4 - Nacional (Processos produtivos básicos)',
+            '5' => '5 - Nacional (Conteúdo de Importação <= 40%)',
+            '6' => '6 - Estrangeira (Importação direta s/ similar nacional)',
+            '7' => '7 - Estrangeira (Mercado interno s/ similar nacional)',
+            '8' => '8 - Nacional (Conteúdo de Importação > 70%)'
+        ];
+        return $map[$origem] ?? ($origem !== '' ? "Origem {$origem}" : '0 - Nacional');
+    }
+
+    /**
      * Vizor: Compara catálogo do eGestor com a Nuvemshop.
-     * Retorna produtos do eGestor indicando quais já estão na Nuvemshop e quais ainda não foram enviados.
+     * Retorna produtos do eGestor indicando quais já estão na Nuvemshop e quais ainda não foram enviados,
+     * incluindo todos os dados fiscais (NCM, CEST, Origem, GTIN, Unidade, Custo, etc.).
      */
     public function getEGestorVsNuvemProducts(int $page = 1, string $filter = '', string|bool $statusFilter = 'all', string $stockFilter = 'all'): array {
         try {
@@ -979,6 +999,24 @@ class SyncService {
 
                 $items = [];
                 foreach ($rows as $r) {
+                    $eId = $r['egestor_id'];
+                    $eProd = null;
+                    if (!empty($eId)) {
+                        $eRes = $this->egestor->getProduct($eId);
+                        if (!empty($eRes['success']) && !empty($eRes['data'])) {
+                            $eProd = $eRes['data'];
+                        }
+                    }
+
+                    $ncm = trim((string)($eProd['ncm'] ?? ''));
+                    $cest = trim((string)($eProd['codigoCEST'] ?? ''));
+                    $origemFiscal = trim((string)($eProd['origemFiscal'] ?? '0'));
+                    $unidade = trim((string)($eProd['unidadeTributada'] ?? 'UN'));
+                    $precoCusto = (float)($eProd['precoCusto'] ?? $r['price'] ?? 0);
+                    $gtin = trim((string)($eProd['refEanGtin'] ?? $r['barcode'] ?? ''));
+                    $gtinUpper = strtoupper($gtin);
+                    $gtinTributavel = ($gtin === '' || $gtinUpper === 'SEM GTIN' || $gtinUpper === 'SEM_GTIN' || $gtin === '0') ? '' : $gtin;
+
                     $items[] = [
                         'codigo' => $r['egestor_id'] ?: $r['sku'],
                         'sku' => $r['sku'] ?: $r['egestor_id'],
@@ -989,7 +1027,21 @@ class SyncService {
                         'in_nuvemshop' => true,
                         'nuvemshop_product_id' => $r['nuvemshop_product_id'],
                         'nuvemshop_variant_id' => $r['nuvemshop_variant_id'],
-                        'stock_nuvemshop' => (float)($r['stock_nuvemshop'] ?? 0)
+                        'stock_nuvemshop' => (float)($r['stock_nuvemshop'] ?? 0),
+                        // DADOS FISCAIS
+                        'ncm' => $ncm,
+                        'cest' => $cest,
+                        'origem_fiscal' => $origemFiscal,
+                        'origem_fiscal_desc' => self::formatOrigemFiscal($origemFiscal),
+                        'unidade_tributada' => $unidade ?: 'UN',
+                        'preco_custo' => $precoCusto,
+                        'gtin_tributavel' => $gtinTributavel,
+                        'grupo_tributos' => trim((string)($eProd['codigoGrupoTributos'] ?? '')),
+                        'beneficio_fiscal' => trim((string)($eProd['codigoBeneficioFiscal'] ?? '')),
+                        'excecao_ipi' => trim((string)($eProd['excecaoIPI'] ?? '')),
+                        'anotacoes_nfe' => trim((string)($eProd['anotacoesNFE'] ?? '')),
+                        'peso_liquido' => (float)($eProd['pesoLiquido'] ?? 0),
+                        'peso_bruto' => (float)($eProd['pesoBruto'] ?? 0)
                     ];
                 }
 
@@ -1090,6 +1142,22 @@ class SyncService {
                     continue; // Apenas estoque baixo (1 a 3)
                 }
 
+                // DADOS FISCAIS COMPLETOS DO EGESTOR
+                $ncm = trim((string)($p['ncm'] ?? ''));
+                $cest = trim((string)($p['codigoCEST'] ?? ''));
+                $origemFiscal = trim((string)($p['origemFiscal'] ?? '0'));
+                $unidade = trim((string)($p['unidadeTributada'] ?? 'UN'));
+                $precoCusto = (float)($p['precoCusto'] ?? 0);
+                $gtin = trim((string)($p['refEanGtin'] ?? ''));
+                $gtinUpper = strtoupper($gtin);
+                $gtinTributavel = ($gtin === '' || $gtinUpper === 'SEM GTIN' || $gtinUpper === 'SEM_GTIN' || $gtin === '0') ? '' : $gtin;
+                $grupoTributos = trim((string)($p['codigoGrupoTributos'] ?? ''));
+                $beneficioFiscal = trim((string)($p['codigoBeneficioFiscal'] ?? ''));
+                $excecaoIPI = trim((string)($p['excecaoIPI'] ?? ''));
+                $anotacoesNfe = trim((string)($p['anotacoesNFE'] ?? ''));
+                $pesoLiquido = (float)($p['pesoLiquido'] ?? 0);
+                $pesoBruto = (float)($p['pesoBruto'] ?? 0);
+
                 $items[] = [
                     'codigo' => $codigo,
                     'sku' => $sku !== '' ? $sku : $codigo,
@@ -1100,7 +1168,21 @@ class SyncService {
                     'in_nuvemshop' => $inNuvem,
                     'nuvemshop_product_id' => $mapping['nuvemshop_product_id'] ?? null,
                     'nuvemshop_variant_id' => $mapping['nuvemshop_variant_id'] ?? null,
-                    'stock_nuvemshop' => $mapping['stock_nuvemshop'] ?? null
+                    'stock_nuvemshop' => $mapping['stock_nuvemshop'] ?? null,
+                    // DADOS FISCAIS
+                    'ncm' => $ncm,
+                    'cest' => $cest,
+                    'origem_fiscal' => $origemFiscal,
+                    'origem_fiscal_desc' => self::formatOrigemFiscal($origemFiscal),
+                    'unidade_tributada' => $unidade ?: 'UN',
+                    'preco_custo' => $precoCusto,
+                    'gtin_tributavel' => $gtinTributavel,
+                    'grupo_tributos' => $grupoTributos,
+                    'beneficio_fiscal' => $beneficioFiscal,
+                    'excecao_ipi' => $excecaoIPI,
+                    'anotacoes_nfe' => $anotacoesNfe,
+                    'peso_liquido' => $pesoLiquido,
+                    'peso_bruto' => $pesoBruto
                 ];
             }
 

@@ -694,9 +694,9 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
         </label>
       </div>
 
-      <div style="margin-top: 14px; padding: 10px 14px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: var(--radius-sm); display: flex; align-items: center; gap: 8px; font-size: 12px; color: #065f46;">
-        <span>📁</span>
-        <span>Gera arquivo <strong>.xlsx nativo</strong> formatado com cabeçalhos e colunas dimensionadas.</span>
+      <div style="margin-top: 14px; padding: 12px 14px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: var(--radius-sm); display: flex; align-items: center; gap: 10px; font-size: 12px; color: #065f46; line-height: 1.4;">
+        <span style="font-size: 18px;">📊</span>
+        <span>A planilha gerada inclui <strong>dados fiscais completos (NCM, CEST, Origem Fiscal, GTIN Tributável, Unidade, Preço de Custo, Tributos e Pesos)</strong> e estoques PDV ⇄ Nuvemshop formatados em <strong>.xlsx nativo</strong>.</span>
       </div>
     </div>
 

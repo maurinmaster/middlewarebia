@@ -226,15 +226,15 @@ try {
             break;
 
         case 'export_egestor_full_catalog':
-            // Varre as páginas do eGestor e retorna todos os produtos para a planilha
-            @set_time_limit(180);
+            // Varre as páginas do eGestor e retorna todos os produtos com dados fiscais para a planilha
+            @set_time_limit(300);
             $filter = trim($_GET['filter'] ?? '');
             $statusFilter = $_GET['status'] ?? 'all';
             $stockFilter = $_GET['stock'] ?? 'all';
 
             $allProducts = [];
             $currentPage = 1;
-            $maxPages = 30; // Proteção para até 1500 produtos por exportação
+            $maxPages = 60; // Suporta até 3.000 produtos por exportação
 
             while ($currentPage <= $maxPages) {
                 $res = $syncService->getEGestorVsNuvemProducts($currentPage, $filter, $statusFilter, $stockFilter);
