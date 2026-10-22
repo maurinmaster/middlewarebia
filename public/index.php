@@ -815,6 +815,8 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
       </div>
     </form>
   </div>
+</div>
+
 <!-- Modal Unificar Produtos do eGestor em Grade na Nuvemshop -->
 <div id="unify-modal" class="modal-overlay">
   <div class="modal" style="max-width: 920px; max-height: 90vh; display: flex; flex-direction: column;">

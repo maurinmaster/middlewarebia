@@ -402,6 +402,7 @@ try {
 
         case 'create_unified_product':
             // Cria um produto com grade de variações unificando produtos avulsos do eGestor
+            @set_time_limit(180);
             $rawInput = file_get_contents('php://input');
             $data = json_decode($rawInput, true);
             if (empty($data)) {

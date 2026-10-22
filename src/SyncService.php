@@ -1507,9 +1507,13 @@ class SyncService {
                 return ['success' => false, 'error' => "ID do eGestor ausente na variante #" . ($index + 1)];
             }
 
-            // Busca os dados do produto no eGestor para garantir integridade
-            $eProdRes = $this->egestor->getProduct($egestorId);
-            $eProd = $eProdRes['success'] ? ($eProdRes['data'] ?? []) : [];
+            // Se os dados essenciais (preço, estoque e SKU) já vieram do cliente, evita chamadas lentas sequenciais ao eGestor
+            $hasClientData = isset($v['price']) && isset($v['stock']) && !empty($v['sku']);
+            $eProd = [];
+            if (!$hasClientData) {
+                $eProdRes = $this->egestor->getProduct($egestorId);
+                $eProd = $eProdRes['success'] ? ($eProdRes['data'] ?? []) : [];
+            }
 
             $rawSku = trim((string)($v['sku'] ?? ($eProd['codigoProprio'] ?? '')));
             $sku = $rawSku !== '' ? $rawSku : $egestorId;
@@ -1532,7 +1536,7 @@ class SyncService {
                 return ['success' => false, 'error' => "A variante com código eGestor {$egestorId} deve ter exatamente " . count($attributes) . " valores de atributos preenchidos."];
             }
 
-            // Coleta fotos do eGestor se houver
+            // Coleta fotos do eGestor se disponíveis
             if (!empty($eProd['listaImagens']) && is_array($eProd['listaImagens'])) {
                 foreach ($eProd['listaImagens'] as $imgItem) {
                     $link = $imgItem['foto']['link'] ?? $imgItem['thumb']['link'] ?? null;
@@ -1599,6 +1603,9 @@ class SyncService {
                 if (!empty($details)) {
                     $err .= " [" . implode('; ', $details) . "]";
                 }
+            }
+            if (stripos($err, 'already been taken') !== false || stripos($err, 'sku') !== false) {
+                $err = "Um ou mais SKUs selecionados já estão em uso na Nuvemshop em outro produto. Altere os SKUs na tabela do modal ou remova o produto antigo.";
             }
             Logger::error("Erro na criação de produto unificado: {$err}", ['body' => $createRes['data'] ?? []]);
             return ['success' => false, 'error' => $err];

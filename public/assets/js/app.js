@@ -1393,65 +1393,138 @@ function updateUnifySelectionUI() {
     }
 }
 
-// Auxiliar inteligente para deduzir nome base comum e cores/diferenças
+// Auxiliar inteligente para deduzir nome base comum, cores e tamanhos das variações
 function deduceUnifyBaseNameAndColors(products) {
-    if (!products || products.length === 0) return { baseName: '', colors: [] };
-    const names = products.map(p => (p.nome || '').trim());
+    if (!products || products.length === 0) return { baseName: '', colors: [], sizes: [] };
+    const rawNames = products.map(p => (p.nome || '').trim());
 
-    // Lista de cores conhecidas comuns em moda/vestuário
+    // Lista de cores conhecidas comuns em moda/vestuário ordenadas por tamanho decrescente
     const commonColors = [
-        'preto', 'preta', 'branco', 'branca', 'off-white', 'off white', 'offwhite',
-        'azul marinho', 'azul royal', 'azul claro', 'azul celeste', 'azul',
-        'verde militar', 'verde musgo', 'verde bandeira', 'verde menta', 'verde lima', 'verde',
-        'rosa bebe', 'rosa bebê', 'rosa chiclete', 'rosa pink', 'pink', 'rosa',
+        'azul marinho', 'azul royal', 'azul claro', 'azul celeste', 'azul bebê',
+        'verde militar', 'verde musgo', 'verde bandeira', 'verde menta', 'verde lima', 'verde oliva',
+        'rosa bebe', 'rosa bebê', 'rosa chiclete', 'rosa pink', 'rosa seco',
+        'cinza mescla', 'cinza chumbo', 'cinza claro',
+        'off-white', 'off white', 'offwhite',
         'vermelho', 'vermelha', 'vinho', 'bordo', 'bordô', 'marsala',
         'amarelo', 'amarela', 'mostarda', 'laranja', 'terracota', 'coral',
-        'bege', 'nude', 'marrom', 'caramelo', 'cacau', 'fendi',
-        'cinza mescla', 'cinza chumbo', 'cinza claro', 'cinza',
-        'lilas', 'lilás', 'roxo', 'roxa', 'lavanda', 'dourado', 'prata'
+        'preto', 'preta', 'branco', 'branca', 'bege', 'nude', 'marrom',
+        'caramelo', 'cacau', 'fendi', 'cinza', 'lilas', 'lilás', 'roxo', 'roxa',
+        'lavanda', 'dourado', 'prata', 'rose', 'rosé', 'pink', 'azul', 'verde', 'rosa'
     ];
 
-    // Tenta encontrar maior prefixo comum
-    let commonPrefix = names[0];
-    for (let i = 1; i < names.length; i++) {
-        while (!names[i].toLowerCase().startsWith(commonPrefix.toLowerCase()) && commonPrefix.length > 0) {
-            commonPrefix = commonPrefix.slice(0, -1);
+    // Padrões de tamanho comuns em moda feminina/vestuário
+    const sizePatterns = [
+        /veste\s+p\s+m\s+g/i, /veste\s+p\s+e\s+m/i, /veste\s+m\s+e\s+g/i,
+        /veste\s+p\s+m/i, /veste\s+m\s+g/i, /veste\s+p/i, /veste\s+m/i, /veste\s+g/i, /veste\s+gg/i,
+        /p\/m\/g/i, /p\/m/i, /m\/g/i,
+        /tamanho\s+único/i, /tamanho\s+unico/i, /tam\.?\s*único/i, /tam\.?\s*unico/i, /único/i, /unico/i,
+        /\b(xgg|xxl|xgl|g1|g2|g3|g4)\b/i, /\b(pp|gg|xg)\b/i, /\b(p|m|g)\b/i,
+        /\b(34|36|38|40|42|44|46|48|50|52|54)\b/
+    ];
+
+    // 1. Tenta verificar se todos os nomes possuem divisão por hífen (ex: "Modelo - Cor - Tamanho")
+    const splitByHyphen = rawNames.map(n => n.split(/\s*-\s*/));
+    const allHaveHyphens = splitByHyphen.every(parts => parts.length >= 2);
+
+    let baseName = '';
+    const colors = [];
+    const sizes = [];
+
+    if (allHaveHyphens) {
+        const firstParts = splitByHyphen.map(parts => parts[0].trim());
+        const allSameFirst = firstParts.every(p => p.toLowerCase() === firstParts[0].toLowerCase());
+
+        if (allSameFirst) {
+            baseName = firstParts[0];
+            products.forEach((p, idx) => {
+                const parts = splitByHyphen[idx];
+                let deducedColor = '';
+                let deducedSize = '';
+
+                if (parts.length >= 3) {
+                    deducedColor = parts[1].trim();
+                    deducedSize = parts.slice(2).join(' - ').trim();
+                } else if (parts.length === 2) {
+                    const second = parts[1].trim();
+                    let isSize = false;
+                    for (const sp of sizePatterns) {
+                        if (sp.test(second)) {
+                            isSize = true;
+                            break;
+                        }
+                    }
+                    if (isSize) {
+                        deducedSize = second;
+                    } else {
+                        deducedColor = second;
+                    }
+                }
+
+                colors.push(deducedColor);
+                sizes.push(deducedSize);
+            });
         }
     }
-    // Remove traços ou espaços no final
-    commonPrefix = commonPrefix.replace(/[\s\-_/]+$/, '').trim();
 
-    // Se o prefixo for muito curto (< 3 letras), usa o nome do primeiro
-    let baseName = commonPrefix;
-    if (baseName.length < 3) {
-        baseName = names[0];
-    }
-
-    // Para cada produto, extrai a cor
-    const colors = products.map(p => {
-        const origName = (p.nome || '').trim();
-        const lowerName = origName.toLowerCase();
-
-        // 1. Procura na lista de cores
-        for (const c of commonColors) {
-            const regex = new RegExp(`\\b${c}\\b`, 'i');
-            if (regex.test(lowerName)) {
-                return c.charAt(0).toUpperCase() + c.slice(1);
+    // Se não deduziu via hífen uniforme, usa prefixo comum e varredura
+    if (!baseName) {
+        let commonPrefix = rawNames[0] || '';
+        for (let i = 1; i < rawNames.length; i++) {
+            while (!rawNames[i].toLowerCase().startsWith(commonPrefix.toLowerCase()) && commonPrefix.length > 0) {
+                commonPrefix = commonPrefix.slice(0, -1);
             }
         }
+        commonPrefix = commonPrefix.replace(/[\s\-_/]+$/, '').trim();
+        baseName = commonPrefix.length >= 3 ? commonPrefix : (rawNames[0] || 'Produto');
 
-        // 2. Se tinha prefixo comum, pega o que sobrou
-        if (commonPrefix && commonPrefix.length >= 3 && lowerName.startsWith(commonPrefix.toLowerCase())) {
-            let rest = origName.substring(commonPrefix.length).replace(/^[\s\-_/]+/, '').trim();
-            if (rest) return rest;
-        }
+        products.forEach((p, idx) => {
+            const name = (p.nome || '').trim();
+            const lower = name.toLowerCase();
 
-        // 3. Fallback: última palavra do nome
-        const parts = origName.split(/[\s\-_/]+/);
-        return parts.length > 1 ? parts[parts.length - 1] : origName;
+            // Detecta cor de forma segura sem depender de \b ASCII em acentos
+            let detectedColor = '';
+            for (const c of commonColors) {
+                const escaped = c.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+                const reg = new RegExp('(^|[^a-záàâãéèêíïóôõöúçñ])' + escaped + '([^a-záàâãéèêíïóôõöúçñ]|$)', 'i');
+                if (reg.test(lower)) {
+                    detectedColor = c.charAt(0).toUpperCase() + c.slice(1);
+                    break;
+                }
+            }
+
+            // Detecta tamanho
+            let detectedSize = '';
+            for (const sp of sizePatterns) {
+                const m = name.match(sp);
+                if (m) {
+                    detectedSize = m[0].trim();
+                    if (/^p$/i.test(detectedSize)) detectedSize = 'P';
+                    else if (/^m$/i.test(detectedSize)) detectedSize = 'M';
+                    else if (/^g$/i.test(detectedSize)) detectedSize = 'G';
+                    else if (/^gg$/i.test(detectedSize)) detectedSize = 'GG';
+                    break;
+                }
+            }
+
+            if (!detectedColor && commonPrefix && commonPrefix.length >= 3 && lower.startsWith(commonPrefix.toLowerCase())) {
+                let rest = name.substring(commonPrefix.length).replace(/^[\s\-_/]+/, '').trim();
+                if (detectedSize) {
+                    rest = rest.replace(new RegExp(detectedSize.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'i'), '').replace(/[\s\-_/]+$/, '').trim();
+                }
+                if (rest) detectedColor = rest;
+            }
+
+            colors.push(detectedColor || `Cor ${idx + 1}`);
+            sizes.push(detectedSize || 'Único (P/M/G)');
+        });
+    }
+
+    products.forEach((p, i) => {
+        if (!colors[i]) colors[i] = `Cor ${i + 1}`;
+        if (!sizes[i]) sizes[i] = 'Único (P/M/G)';
     });
 
-    return { baseName, colors };
+    return { baseName, colors, sizes };
 }
 
 function openUnifyModal() {
@@ -1479,7 +1552,14 @@ function openUnifyModal() {
     const defaultPriceInput = document.getElementById('unify-default-price');
     if (defaultPriceInput) defaultPriceInput.value = '';
 
-    const defaultAttr2 = document.getElementById('unify-attr2-default')?.value || 'Único (P/M/G)';
+    // Se todos os tamanhos forem iguais, define como padrão
+    const allSameSize = deduction.sizes.length > 0 && deduction.sizes.every(s => s === deduction.sizes[0]);
+    const defaultAttr2Input = document.getElementById('unify-attr2-default');
+    if (defaultAttr2Input) {
+        defaultAttr2Input.value = allSameSize ? deduction.sizes[0] : '';
+        defaultAttr2Input.placeholder = allSameSize ? deduction.sizes[0] : 'Vários tamanhos detectados';
+    }
+
     const enableAttr2 = document.getElementById('unify-enable-attr2')?.checked !== false;
 
     // Renderiza linhas da tabela de variações no modal
@@ -1487,12 +1567,14 @@ function openUnifyModal() {
     if (tbody) {
         tbody.innerHTML = products.map((p, idx) => {
             const guessedColor = deduction.colors[idx] || `Cor ${idx + 1}`;
+            const guessedSize = deduction.sizes[idx] || 'Único (P/M/G)';
             const skuVal = p.sku && p.sku !== '-' ? p.sku : p.codigo;
             const priceVal = p.preco ? parseFloat(p.preco).toFixed(2) : '0.00';
             const stockVal = parseFloat(p.estoque || 0);
+            const barcodeVal = p.barcode && p.barcode !== '-' ? p.barcode : '';
 
             return `
-                <tr id="unify-row-${p.codigo}" data-egestor-id="${p.codigo}">
+                <tr id="unify-row-${p.codigo}" data-egestor-id="${p.codigo}" data-stock="${stockVal}" data-barcode="${escapeHtml(barcodeVal)}">
                     <td><strong>${p.codigo}</strong></td>
                     <td title="${escapeHtml(p.nome)}">
                         <span style="display: block; max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500;">
@@ -1503,7 +1585,7 @@ function openUnifyModal() {
                         <input type="text" class="form-control unify-item-attr1" value="${escapeHtml(guessedColor)}" required style="height: 30px; font-size: 12px;" placeholder="Ex: Rosa">
                     </td>
                     <td class="unify-col-attr2" style="${enableAttr2 ? '' : 'display: none;'}">
-                        <input type="text" class="form-control unify-item-attr2" value="${escapeHtml(defaultAttr2)}" style="height: 30px; font-size: 12px;" placeholder="Ex: Único">
+                        <input type="text" class="form-control unify-item-attr2" value="${escapeHtml(guessedSize)}" style="height: 30px; font-size: 12px;" placeholder="Ex: Único">
                     </td>
                     <td>
                         <span class="stock-tag ${stockVal > 0 ? 'in-stock' : 'out-of-stock'}">${stockVal} un</span>
@@ -1654,6 +1736,8 @@ async function submitUnifyProducts() {
             egestor_id: egestorId,
             sku: skuVal,
             price: priceVal,
+            stock: parseFloat(r.getAttribute('data-stock') || 0),
+            barcode: r.getAttribute('data-barcode') || '',
             values: values
         });
     }
@@ -1685,7 +1769,7 @@ async function submitUnifyProducts() {
     }
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
 
     try {
         const res = await fetch('api.php?action=create_unified_product', {
@@ -1696,7 +1780,14 @@ async function submitUnifyProducts() {
         });
         clearTimeout(timeoutId);
 
-        const data = await res.json();
+        let data;
+        const textResp = await res.text();
+        try {
+            data = JSON.parse(textResp);
+        } catch (jsonErr) {
+            console.error('Resposta não-JSON do servidor:', textResp);
+            throw new Error('O servidor retornou uma resposta inválida. Detalhes: ' + textResp.substring(0, 150));
+        }
 
         if (data.success) {
             showToast(data.message || 'Produto unificado com sucesso na Nuvemshop!', 'success');
@@ -1728,9 +1819,9 @@ async function submitUnifyProducts() {
         }
     } catch (err) {
         clearTimeout(timeoutId);
-        let errorMsg = 'Falha ao se comunicar com o servidor.';
+        let errorMsg = err.message || 'Falha ao se comunicar com o servidor.';
         if (err.name === 'AbortError') {
-            errorMsg = 'A requisição demorou mais de 45 segundos e foi cancelada. Verifique se o anúncio foi criado na Nuvemshop.';
+            errorMsg = 'A requisição demorou mais de 90 segundos e foi cancelada. Verifique se o anúncio foi criado na Nuvemshop.';
         }
         showToast(errorMsg, 'error');
         if (statusBox) {
