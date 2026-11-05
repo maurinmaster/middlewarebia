@@ -1,6 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
     initTabs();
     loadStatus();
+    loadEGestorSellers();
     loadProductsList(1);
     initNewProductForm();
 
@@ -864,16 +865,44 @@ async function loadLogs() {
 // ========================================================
 // CONFIGURAÇÕES E WEBHOOKS
 // ========================================================
+async function loadEGestorSellers() {
+    const select = document.getElementById('select-egestor-seller');
+    if (!select) return;
+
+    try {
+        const res = await fetch('api.php?action=get_egestor_sellers');
+        const data = await res.json();
+        if (data.success && Array.isArray(data.sellers)) {
+            const currentSelected = data.custom_seller_id || '';
+            const nuvemUser = data.sellers.find(u => (u.nome || '').toLowerCase().includes('nuvem'));
+            const nuvemInfo = nuvemUser ? ` (Encontrado: #${nuvemUser.codigo} - ${nuvemUser.nome})` : ' (Criar no eGestor para vincular)';
+
+            let html = `<option value="">Detectar automaticamente: Vendedor "Nuvem"${nuvemInfo}</option>`;
+            data.sellers.forEach(s => {
+                const isSelected = String(s.codigo) === String(currentSelected) ? 'selected' : '';
+                const tagVendedor = s.vendedor ? ' [Vendedor]' : '';
+                html += `<option value="${s.codigo}" ${isSelected}>#${s.codigo} - ${escapeHtml(s.nome)}${tagVendedor}</option>`;
+            });
+            select.innerHTML = html;
+        }
+    } catch (err) {
+        console.error('Falha ao listar vendedores do eGestor:', err);
+    }
+}
+
 async function saveSettings(e) {
     e.preventDefault();
     const token = document.getElementById('input-personal-token').value.trim();
     const onlyStockEl = document.getElementById('input-sync-only-stock');
     const onlyStock = onlyStockEl ? onlyStockEl.checked : true;
+    const sellerEl = document.getElementById('select-egestor-seller');
+    const sellerId = sellerEl ? sellerEl.value.trim() : '';
 
     try {
         const formData = new FormData();
         formData.append('egestor_personal_token', token);
         formData.append('sync_only_with_stock', onlyStock ? '1' : '0');
+        formData.append('egestor_seller_id', sellerId);
 
         const res = await fetch('api.php?action=save_settings', {
             method: 'POST',
@@ -884,6 +913,7 @@ async function saveSettings(e) {
         if (data.success) {
             showToast('Configurações salvas com sucesso!', 'success');
             loadStatus();
+            loadEGestorSellers();
         } else {
             showToast('Erro ao salvar: ' + (data.error || 'Desconhecido'), 'error');
         }

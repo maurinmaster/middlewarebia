@@ -617,6 +617,18 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
             </label>
           </div>
 
+          <div class="form-group" style="padding: 14px; background: #f8fafc; border: 1px solid var(--border-color); border-radius: var(--radius-sm); margin-top: 16px;">
+            <label for="select-egestor-seller" style="font-weight: 600; font-size: 13px; color: var(--text-main); margin-bottom: 6px; display: block;">
+              👤 Vendedor no eGestor para Vendas da Nuvemshop:
+            </label>
+            <select id="select-egestor-seller" class="form-control" style="max-width: 420px; font-size: 13px;">
+              <option value="">Detectar automaticamente: Vendedor "Nuvem" (Padrão)</option>
+            </select>
+            <p style="font-size: 12px; color: var(--text-muted); margin-top: 6px; line-height: 1.4;">
+              O middleware busca automaticamente pelo usuário/vendedor com o nome <strong>Nuvem</strong> no eGestor. Você pode cadastrar um usuário com o nome "Nuvem" no eGestor (em <em>Configurações &gt; Usuários</em>) ou escolher um vendedor específico na lista acima.
+            </p>
+          </div>
+
           <div style="margin-top: 20px;">
             <button type="submit" class="btn btn-primary">Salvar Configurações</button>
           </div>

@@ -1665,7 +1665,7 @@ class SyncService {
      * Coleta os dados do cliente e da compra da Nuvemshop e lança no eGestor
      * Cria ou atualiza o Contato e registra a Venda pronta para emissão de NF-e (Opção A)
      */
-    public function syncOrderCustomerAndSaleToEGestor(array $order, string $orderId): array {
+    public function syncOrderCustomerAndSaleToEGestor(array $order, string $orderId, bool $force = false): array {
         $db = Database::getConnection();
 
         // 1. Extração dos dados do cliente
@@ -1748,17 +1748,13 @@ class SyncService {
         // 3. Montagem dos itens da venda para o eGestor
         $saleProducts = [];
         $products = $order['products'] ?? [];
-        $totalItems = count($products);
-        $totalDiscount = (float)($order['discount'] ?? 0);
-        $itemDiscount = ($totalItems > 0 && $totalDiscount > 0) ? round($totalDiscount / $totalItems, 2) : 0;
+        $subtotal = 0;
 
         foreach ($products as $item) {
             $sku = trim((string)($item['sku'] ?? ''));
             $barcode = trim((string)($item['barcode'] ?? ''));
-            $qty = (float)($item['quantity'] ?? 1);
+            $qty = max(1, (float)($item['quantity'] ?? 1));
             $price = (float)($item['price'] ?? 0);
-            $nuvemVarId = $item['variant_id'] ?? null;
-            $nuvemProdId = $item['product_id'] ?? null;
             $egestorId = null;
 
             // Busca item no eGestor diretamente em tempo real por SKU ou Código de Barras
@@ -1777,29 +1773,56 @@ class SyncService {
             }
 
             if ($egestorId) {
+                $subtotal += ($price * $qty);
                 $saleProducts[] = [
                     'codProduto' => (int)$egestorId,
                     'preco' => $price,
                     'quant' => $qty,
-                    'vDesc' => $itemDiscount,
+                    'vDesc' => 0,
                     'obs' => "Pedido Nuvemshop #{$orderId}"
                 ];
             }
         }
 
-        // 4. Se já temos a venda registrada no banco local, evita duplicidade
-        $stmtCheck = $db->prepare("SELECT egestor_sale_id FROM orders_sync WHERE nuvemshop_order_id = ? LIMIT 1");
-        $stmtCheck->execute([$orderId]);
-        $existingSaleId = $stmtCheck->fetchColumn();
+        // Distribui o desconto proporcionalmente entre os itens, ajustando o último para fechar o total exato ao centavo
+        $totalDiscount = max(0, (float)($order['discount'] ?? 0));
+        if (!empty($saleProducts)) {
+            $remainingDiscount = $totalDiscount;
+            $numItems = count($saleProducts);
+            foreach ($saleProducts as $idx => &$sp) {
+                if ($totalDiscount <= 0) {
+                    $sp['vDesc'] = 0;
+                    continue;
+                }
+                if ($idx === $numItems - 1) {
+                    $sp['vDesc'] = max(0, round($remainingDiscount, 2));
+                } else {
+                    $itemTotal = $sp['preco'] * $sp['quant'];
+                    $ratio = $subtotal > 0 ? ($itemTotal / $subtotal) : (1 / $numItems);
+                    $allocated = round($totalDiscount * $ratio, 2);
+                    $allocated = min($allocated, $remainingDiscount);
+                    $sp['vDesc'] = $allocated;
+                    $remainingDiscount = round($remainingDiscount - $allocated, 2);
+                }
+            }
+            unset($sp);
+        }
 
-        if ($existingSaleId) {
-            Logger::info("Venda para o pedido Nuvemshop #{$orderId} já foi lançada no eGestor (ID Venda #{$existingSaleId}).");
-            return [
-                'success' => true,
-                'message' => 'Venda já registrada no eGestor',
-                'sale_id' => $existingSaleId,
-                'contact_id' => $contactId
-            ];
+        // 4. Se já temos a venda registrada no banco local e não é forçado, evita duplicidade
+        if (!$force) {
+            $stmtCheck = $db->prepare("SELECT egestor_sale_id FROM orders_sync WHERE nuvemshop_order_id = ? LIMIT 1");
+            $stmtCheck->execute([$orderId]);
+            $existingSaleId = $stmtCheck->fetchColumn();
+
+            if ($existingSaleId) {
+                Logger::info("Venda para o pedido Nuvemshop #{$orderId} já foi lançada no eGestor (ID Venda #{$existingSaleId}).");
+                return [
+                    'success' => true,
+                    'message' => 'Venda já registrada no eGestor',
+                    'sale_id' => $existingSaleId,
+                    'contact_id' => $contactId
+                ];
+            }
         }
 
         // 5. Se o cliente foi identificado e há produtos mapeados, lança a venda no eGestor
@@ -1807,12 +1830,47 @@ class SyncService {
             $freight = (float)($order['shipping_cost_customer'] ?? 0);
             $dtVenda = date('Y-m-d', strtotime($order['created_at'] ?? 'now'));
 
+            // Calcula o valor total exato dos produtos com desconto aplicado
+            $calcItemsTotal = 0;
+            foreach ($saleProducts as $sp) {
+                $calcItemsTotal += ($sp['preco'] * $sp['quant']) - $sp['vDesc'];
+            }
+            $calculatedSaleTotal = round($calcItemsTotal + $freight, 2);
+
+            // Vendedor no eGestor: Busca vendedor 'Nuvem' (ou configurado)
+            $sellerId = $this->egestor->getSellerId('Nuvem');
+
+            // Financeiro: Monta as parcelas de pagamento para conciliar 100% com o total da venda (sem resíduos)
+            $paymentDetails = $order['payment_details'] ?? [];
+            $method = (string)($paymentDetails['method'] ?? '');
+            $gateway = (string)($order['gateway'] ?? $order['gateway_name'] ?? '');
+            $installments = max(1, (int)($paymentDetails['installments'] ?? 1));
+
+            $codFormaPgto = $this->egestor->mapPaymentMethod($method, $gateway);
+
+            $financeiros = [];
+            if ($calculatedSaleTotal > 0) {
+                $remainingVal = $calculatedSaleTotal;
+                $baseVal = round($calculatedSaleTotal / $installments, 2);
+                for ($i = 0; $i < $installments; $i++) {
+                    $val = ($i === $installments - 1) ? round($remainingVal, 2) : $baseVal;
+                    $remainingVal = round($remainingVal - $val, 2);
+                    $dtVenc = date('Y-m-d', strtotime("{$dtVenda} +{$i} month"));
+                    $financeiros[] = [
+                        'codFormaPgto' => $codFormaPgto,
+                        'dtVenc' => $dtVenc,
+                        'valor' => $val
+                    ];
+                }
+            }
+
             $salePayload = [
                 'codContato' => $contactId,
-                'codVendedor' => 1,
+                'codVendedor' => $sellerId,
                 'dtVenda' => $dtVenda,
                 'produtos' => $saleProducts,
                 'valorFrete' => $freight,
+                'financeiros' => $financeiros,
                 'tags' => ['Nuvemshop']
             ];
 

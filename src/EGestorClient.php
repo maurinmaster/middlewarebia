@@ -8,6 +8,16 @@ class EGestorClient {
     private string $authUrl;
     private string $apiUrl;
 
+    /**
+     * Cache em memória dos usuários do eGestor
+     */
+    private ?array $cachedUsers = null;
+
+    /**
+     * Cache em memória das formas de pagamento do eGestor
+     */
+    private ?array $cachedPaymentMethods = null;
+
     public function __construct(array $config) {
         $this->securityToken = (string)($config['security_token'] ?? '');
         $this->personalToken = (string)($config['personal_token'] ?? '');
@@ -425,6 +435,143 @@ class EGestorClient {
     }
 
     /**
+     * Lista todos os usuários/vendedores cadastrados no eGestor
+     */
+    public function getUsers(bool $forceRefresh = false): array {
+        if ($this->cachedUsers !== null && !$forceRefresh) {
+            return $this->cachedUsers;
+        }
+
+        $res = $this->request('GET', '/usuarios');
+        if ($res['success'] && is_array($res['data'])) {
+            $this->cachedUsers = $res['data']['data'] ?? $res['data'];
+            return $this->cachedUsers;
+        }
+
+        return [];
+    }
+
+    /**
+     * Resolve o ID do vendedor a ser utilizado nas vendas
+     * 1. Prioriza configuração salva no banco (egestor_seller_id) ou ambiente
+     * 2. Busca usuário no eGestor com nome ou login contendo 'Nuvem' ou 'Nuvemshop'
+     * 3. Busca usuário no eGestor configurado com vendedor = true
+     * 4. Fallback final para ID 1
+     */
+    public function getSellerId(?string $preferredName = 'Nuvem'): int {
+        // 1. Configuração salva no banco de dados ou ambiente
+        $dbSellerId = Database::getSetting('egestor_seller_id');
+        if (!empty($dbSellerId) && is_numeric($dbSellerId) && (int)$dbSellerId > 0) {
+            return (int)$dbSellerId;
+        }
+        $envSellerId = getenv('EGESTOR_DEFAULT_SELLER_ID');
+        if (!empty($envSellerId) && is_numeric($envSellerId) && (int)$envSellerId > 0) {
+            return (int)$envSellerId;
+        }
+
+        $targetName = trim(Database::getSetting('egestor_seller_name', $preferredName ?: 'Nuvem'));
+        $users = $this->getUsers();
+
+        // 2. Procura pelo nome preferencial (ex: 'Nuvem' ou 'Nuvemshop')
+        if (!empty($targetName) && !empty($users)) {
+            $targetLower = mb_strtolower($targetName, 'UTF-8');
+            foreach ($users as $u) {
+                $uName = mb_strtolower(trim((string)($u['nome'] ?? '')), 'UTF-8');
+                $uLogin = mb_strtolower(trim((string)($u['login'] ?? '')), 'UTF-8');
+                if (str_contains($uName, $targetLower) || str_contains($uLogin, $targetLower)) {
+                    return (int)$u['codigo'];
+                }
+            }
+        }
+
+        // 3. Fallback: Procura usuário vendedor ativo que não seja o Igor (se possível)
+        if (!empty($users)) {
+            foreach ($users as $u) {
+                if (!empty($u['vendedor']) && (int)$u['codigo'] !== 1) {
+                    return (int)$u['codigo'];
+                }
+            }
+            foreach ($users as $u) {
+                if (!empty($u['vendedor'])) {
+                    return (int)$u['codigo'];
+                }
+            }
+        }
+
+        return 1;
+    }
+
+    /**
+     * Lista formas de pagamento cadastradas no eGestor
+     */
+    public function getPaymentMethods(bool $forceRefresh = false): array {
+        if ($this->cachedPaymentMethods !== null && !$forceRefresh) {
+            return $this->cachedPaymentMethods;
+        }
+
+        $res = $this->request('GET', '/formasPagamento');
+        if ($res['success'] && is_array($res['data'])) {
+            $this->cachedPaymentMethods = $res['data']['data'] ?? $res['data'];
+            return $this->cachedPaymentMethods;
+        }
+
+        return [];
+    }
+
+    /**
+     * Mapeia forma de pagamento da Nuvemshop para o código correspondente no eGestor
+     */
+    public function mapPaymentMethod(string $method, string $gateway = ''): int {
+        $cleanMethod = mb_strtolower(trim($method), 'UTF-8');
+        $cleanGateway = mb_strtolower(trim($gateway), 'UTF-8');
+
+        $formas = $this->getPaymentMethods();
+
+        // Detecta o tipo pretendido
+        $targetType = 'credito'; // default
+        if (str_contains($cleanMethod, 'pix') || str_contains($cleanGateway, 'pix')) {
+            $targetType = 'pix';
+        } elseif (str_contains($cleanMethod, 'debit') || str_contains($cleanMethod, 'debito')) {
+            $targetType = 'debito';
+        } elseif (str_contains($cleanMethod, 'boleto') || str_contains($cleanMethod, 'ticket') || str_contains($cleanMethod, 'transfer')) {
+            $targetType = 'boleto';
+        } elseif (str_contains($cleanMethod, 'dinheiro') || str_contains($cleanMethod, 'cash')) {
+            $targetType = 'dinheiro';
+        }
+
+        // Tenta encontrar dinamicamente na lista do eGestor
+        if (!empty($formas)) {
+            foreach ($formas as $f) {
+                $fNome = mb_strtolower(trim((string)($f['nome'] ?? '')), 'UTF-8');
+                if ($targetType === 'pix' && str_contains($fNome, 'pix')) {
+                    return (int)$f['codigo'];
+                }
+                if ($targetType === 'credito' && (str_contains($fNome, 'crédito') || str_contains($fNome, 'credito'))) {
+                    return (int)$f['codigo'];
+                }
+                if ($targetType === 'debito' && (str_contains($fNome, 'débito') || str_contains($fNome, 'debito'))) {
+                    return (int)$f['codigo'];
+                }
+                if ($targetType === 'boleto' && (str_contains($fNome, 'transf') || str_contains($fNome, 'boleto'))) {
+                    return (int)$f['codigo'];
+                }
+                if ($targetType === 'dinheiro' && str_contains($fNome, 'dinheiro')) {
+                    return (int)$f['codigo'];
+                }
+            }
+        }
+
+        // Fallbacks baseados nos IDs padrão da conta
+        return match ($targetType) {
+            'pix' => 15,
+            'debito' => 5,
+            'boleto' => 8,
+            'dinheiro' => 1,
+            default => 4 // Cartão crédito
+        };
+    }
+
+    /**
      * Registra uma Venda de produtos no eGestor (preparada para emissão de NF-e)
      */
     public function createSale(array $data): array {
@@ -462,15 +609,38 @@ class EGestorClient {
             return ['success' => false, 'error' => 'Nenhum produto válido mapeado para envio ao eGestor'];
         }
 
-        // A API v1 do eGestor exige 'codVendedor' e NÃO aceita 'obs' ou 'valorDesconto' na raiz da venda
+        $codVendedor = (int)($data['codVendedor'] ?? $this->getSellerId('Nuvem'));
+
+        // A API v1 do eGestor exige 'codVendedor' e aceita 'financeiros' para recebimentos vinculados
         $payload = [
             'codContato' => (int)($data['codContato'] ?? 0),
-            'codVendedor' => (int)($data['codVendedor'] ?? 1),
+            'codVendedor' => $codVendedor,
             'dtVenda' => $data['dtVenda'] ?? date('Y-m-d'),
             'produtos' => $produtos,
             'valorFrete' => (float)($data['valorFrete'] ?? 0),
             'tags' => ['Nuvemshop']
         ];
+
+        // Lançamentos financeiros (parcelas de cartão, pix, etc.)
+        if (!empty($data['financeiros']) && is_array($data['financeiros'])) {
+            $finItems = [];
+            foreach ($data['financeiros'] as $f) {
+                $val = round((float)($f['valor'] ?? 0), 2);
+                if ($val <= 0) continue;
+                $finItem = [
+                    'valor' => $val,
+                    'dtVenc' => $f['dtVenc'] ?? ($data['dtVenda'] ?? date('Y-m-d')),
+                    'codFormaPgto' => (int)($f['codFormaPgto'] ?? $this->mapPaymentMethod('credit_card'))
+                ];
+                if (!empty($f['codCaixa'])) {
+                    $finItem['codCaixa'] = (int)$f['codCaixa'];
+                }
+                $finItems[] = $finItem;
+            }
+            if (!empty($finItems)) {
+                $payload['financeiros'] = $finItems;
+            }
+        }
 
         Logger::info("Lançando Venda no eGestor para contato ID {$payload['codContato']} com " . count($produtos) . " item(ns)...", ['payload' => $payload]);
         return $this->request('POST', '/vendas', $payload);

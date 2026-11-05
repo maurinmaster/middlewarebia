@@ -62,7 +62,9 @@ try {
                     'last_sync' => $lastSync,
                     'errors_24h' => $recentErrors
                 ],
-                'sync_only_with_stock' => $syncService->shouldSyncOnlyWithStock()
+                'sync_only_with_stock' => $syncService->shouldSyncOnlyWithStock(),
+                'egestor_seller_id' => $egestor->getSellerId('Nuvem'),
+                'custom_seller_id' => Database::getSetting('egestor_seller_id', '')
             ]);
             break;
 
@@ -330,10 +332,15 @@ try {
                 $syncOnlyWithStock = filter_var($_POST['sync_only_with_stock'], FILTER_VALIDATE_BOOLEAN);
                 $syncService->setSyncOnlyWithStock($syncOnlyWithStock);
             }
+            if (isset($_POST['egestor_seller_id'])) {
+                $sellerId = trim($_POST['egestor_seller_id']);
+                Database::setSetting('egestor_seller_id', $sellerId);
+            }
             echo json_encode([
                 'success' => true,
                 'message' => 'Configurações salvas com sucesso!',
-                'sync_only_with_stock' => $syncService->shouldSyncOnlyWithStock()
+                'sync_only_with_stock' => $syncService->shouldSyncOnlyWithStock(),
+                'egestor_seller_id' => $egestor->getSellerId('Nuvem')
             ]);
             break;
 
@@ -457,6 +464,18 @@ try {
             ]);
             break;
 
+        case 'get_egestor_sellers':
+            $sellers = $egestor->getUsers();
+            $currentSellerId = $egestor->getSellerId('Nuvem');
+            $customSellerId = Database::getSetting('egestor_seller_id', '');
+            echo json_encode([
+                'success' => true,
+                'current_seller_id' => $currentSellerId,
+                'custom_seller_id' => $customSellerId,
+                'sellers' => $sellers
+            ]);
+            break;
+
         case 'sync_order':
             // Sincroniza manualmente um pedido da Nuvemshop no eGestor
             $orderId = trim($_POST['order_id'] ?? $_GET['order_id'] ?? '');
@@ -467,11 +486,32 @@ try {
 
             $orderRes = $nuvemshop->getOrder($orderId);
             if (!$orderRes['success'] || empty($orderRes['data'])) {
+                // Tenta buscar pelo número do pedido (ex: #118)
+                $cleanNum = ltrim($orderId, '#');
+                $searchRes = $nuvemshop->getOrders(1, 10, ['q' => $cleanNum]);
+                if ($searchRes['success'] && !empty($searchRes['data'])) {
+                    foreach ($searchRes['data'] as $cand) {
+                        if ((string)($cand['number'] ?? '') === $cleanNum || (string)($cand['id'] ?? '') === $cleanNum) {
+                            $orderRes = ['success' => true, 'data' => $cand];
+                            break;
+                        }
+                    }
+                    if (!$orderRes['success'] && !empty($searchRes['data'][0])) {
+                        $orderRes = ['success' => true, 'data' => $searchRes['data'][0]];
+                    }
+                }
+            }
+
+            if (!$orderRes['success'] || empty($orderRes['data'])) {
                 echo json_encode(['success' => false, 'error' => $orderRes['error'] ?? 'Pedido não localizado na Nuvemshop']);
                 exit;
             }
 
-            $res = $syncService->syncOrderCustomerAndSaleToEGestor($orderRes['data'], $orderId);
+            $orderData = $orderRes['data'];
+            $realOrderId = (string)($orderData['id'] ?? $orderId);
+            $force = filter_var($_POST['force'] ?? $_GET['force'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
+            $res = $syncService->syncOrderCustomerAndSaleToEGestor($orderData, $realOrderId, $force);
             echo json_encode($res);
             break;
 
