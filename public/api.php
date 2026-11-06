@@ -296,7 +296,7 @@ try {
                 $webhookUrl = rtrim($envUrl ?: 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost'), '/') . '/webhook-nuvemshop.php';
             }
 
-            $events = ['order/created', 'order/paid', 'order/cancelled', 'product/updated'];
+            $events = ['order/created', 'order/paid', 'order/updated', 'order/cancelled', 'product/updated'];
             $existing = $nuvemshop->listWebhooks();
             $existingUrls = [];
             if ($existing['success'] && is_array($existing['data'])) {

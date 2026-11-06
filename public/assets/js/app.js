@@ -1206,6 +1206,10 @@ async function loadOrdersList() {
             let statusBadge = '';
             if (o.status === 'sale_registered') {
                 statusBadge = '<span class="status-badge online"><span class="status-dot"></span> Venda no eGestor (Pronta para NF-e)</span>';
+            } else if (o.status === 'waiting_payment') {
+                statusBadge = `<span class="status-badge warning" title="${escapeHtml(o.details || '')}"><span class="status-dot"></span> Aguardando Pagamento (Nuvem)</span>`;
+            } else if (o.status === 'cancelled') {
+                statusBadge = `<span class="status-badge offline" title="${escapeHtml(o.details || '')}"><span class="status-dot"></span> Cancelado</span>`;
             } else if (o.status === 'error') {
                 statusBadge = `<span class="status-badge offline" title="${escapeHtml(o.details || '')}"><span class="status-dot"></span> Erro no eGestor</span>`;
             } else {
@@ -1305,6 +1309,11 @@ async function submitManualOrderSync(e) {
             closeManualOrderSyncModal();
             loadOrdersList();
             loadLogs();
+        } else if (data.waiting_payment) {
+            showToast(data.error || 'Aguardando confirmação do pagamento na Nuvemshop.', 'warning');
+            closeManualOrderSyncModal();
+            loadOrdersList();
+            loadLogs();
         } else {
             showToast('Erro ao sincronizar pedido: ' + (data.error || 'Falha'), 'error');
         }
@@ -1334,6 +1343,10 @@ async function reSyncOrder(orderId) {
 
         if (data.success) {
             showToast(data.message || 'Pedido sincronizado com sucesso no eGestor!', 'success');
+            loadOrdersList();
+            loadLogs();
+        } else if (data.waiting_payment) {
+            showToast(data.error || 'Aguardando confirmação do pagamento na Nuvemshop.', 'warning');
             loadOrdersList();
             loadLogs();
         } else {
