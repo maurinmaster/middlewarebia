@@ -10,6 +10,7 @@ Este documento contém as instruções fundamentais, regras de negócio e conven
 3. **Cadastros pelo Middleware são Simultâneos:** Produtos novos criados pela aba "Cadastrar Produto" são enviados para ambos os sistemas ao mesmo tempo com os dados fiscais.
 4. **Sincronização Bilateral Condicionada:** Vendas no PDV baixam estoque na Nuvemshop e vice-versa, **apenas para produtos que existam na Nuvemshop**. Se o item não existe na Nuvemshop, o webhook deve ignorar de forma limpa (`unmapped_product_skipped`) sem registrar erro.
 5. **Zero Armazenamento de Produtos no Banco Local:** O banco SQLite (`data/database.sqlite`) não armazena catálogo de produtos nem tabelas estáticas de mapeamento. Tudo opera em tempo real via SKU. O banco local guarda estritamente logs (máx. 500) e pedidos (máx. 300) com poda automática (`Database::pruneHistory()`).
+6. **Venda da Nuvemshop no eGestor Exige Pagamento Confirmado:** Pedidos criados na Nuvemshop com pagamento pendente (PIX emitido aguardando pagamento, boleto pendente) **NÃO geram venda nem baixa de estoque no eGestor**. Ficam registrados no middleware como `waiting_payment` ("Aguardando Pagamento"). A criação da venda e baixa de estoque no eGestor só ocorre após a confirmação do pagamento (`order/paid` ou `payment_status === 'paid'`). Pedidos cancelados sem pagamento prévio não estornam estoque no eGestor.
 
 ---
 
