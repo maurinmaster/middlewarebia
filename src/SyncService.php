@@ -383,6 +383,41 @@ class SyncService {
     }
 
     /**
+     * Obtém um lock exclusivo não-bloqueante no sistema de arquivos para processar um pedido.
+     * Evita condições de corrida (race conditions) quando múltiplos webhooks chegam simultaneamente da Nuvemshop
+     * (por exemplo, order/created e order/paid disparados no mesmo milissegundo em compras com cartão de crédito).
+     * @return resource|false Retorna o recurso de arquivo aberto ou false se já estiver bloqueado por outro processo
+     */
+    public function acquireOrderLock(string $orderId) {
+        $lockDir = dirname(__DIR__) . '/data/locks';
+        if (!is_dir($lockDir)) {
+            @mkdir($lockDir, 0777, true);
+        }
+        $cleanId = preg_replace('/[^a-zA-Z0-9_-]/', '', $orderId);
+        $lockFile = $lockDir . '/order_' . md5($cleanId) . '.lock';
+        $fp = @fopen($lockFile, 'c+');
+        if (!$fp) {
+            return false;
+        }
+        if (!@flock($fp, LOCK_EX | LOCK_NB)) {
+            @fclose($fp);
+            return false;
+        }
+        return $fp;
+    }
+
+    /**
+     * Libera o lock exclusivo do pedido
+     * @param resource|null $lockHandle
+     */
+    public function releaseOrderLock($lockHandle): void {
+        if ($lockHandle && is_resource($lockHandle)) {
+            @flock($lockHandle, LOCK_UN);
+            @fclose($lockHandle);
+        }
+    }
+
+    /**
      * Processa webhook recebido da Nuvemshop (E-commerce)
      * Quando ocorre uma venda paga na Nuvemshop -> Registra a Venda no eGestor (PDV) com baixa automática de estoque!
      */
@@ -398,183 +433,198 @@ class SyncService {
                 return ['success' => false, 'error' => 'ID de pedido ausente'];
             }
 
-            // Webhooks da Nuvemshop enviam payload enxuto (thin payload: store_id, event, id).
-            // Se o payload não tiver os produtos ou status de pagamento, busca o pedido completo via API REST da Nuvemshop:
-            if (empty($payload['products']) || !isset($payload['payment_status'])) {
-                Logger::info("Buscando dados completos na API Nuvemshop para o pedido #{$orderId}...");
-                $orderRes = $this->nuvemshop->getOrder($orderId);
-                if ($orderRes['success'] && !empty($orderRes['data'])) {
-                    $payload = $orderRes['data'];
-                } else {
-                    $err = $orderRes['error'] ?? 'Falha ao buscar dados do pedido na Nuvemshop';
-                    Logger::error("Não foi possível carregar pedido #{$orderId}: {$err}");
-                    return ['success' => false, 'error' => $err];
-                }
+            // Lock de concorrência atômico por pedido: impede que webhooks simultâneos criem vendas duplicadas
+            $lock = $this->acquireOrderLock($orderId);
+            if (!$lock) {
+                $concurMsg = "Pedido Nuvemshop #{$orderId} já está sendo processado por outra requisição simultânea. Ignorando evento concorrente ({$event}).";
+                Logger::info($concurMsg);
+                return [
+                    'success' => true,
+                    'message' => $concurMsg
+                ];
             }
 
-            $paymentStatus = strtolower(trim((string)($payload['payment_status'] ?? '')));
-            $orderStatus = strtolower(trim((string)($payload['status'] ?? '')));
+            try {
+                // Webhooks da Nuvemshop enviam payload enxuto (thin payload: store_id, event, id).
+                // Se o payload não tiver os produtos ou status de pagamento, busca o pedido completo via API REST da Nuvemshop:
+                if (empty($payload['products']) || !isset($payload['payment_status'])) {
+                    Logger::info("Buscando dados completos na API Nuvemshop para o pedido #{$orderId}...");
+                    $orderRes = $this->nuvemshop->getOrder($orderId);
+                    if ($orderRes['success'] && !empty($orderRes['data'])) {
+                        $payload = $orderRes['data'];
+                    } else {
+                        $err = $orderRes['error'] ?? 'Falha ao buscar dados do pedido na Nuvemshop';
+                        Logger::error("Não foi possível carregar pedido #{$orderId}: {$err}");
+                        return ['success' => false, 'error' => $err];
+                    }
+                }
 
-            $isCancelled = ($event === 'order/cancelled' || $orderStatus === 'cancelled');
-            $isPaid = ($event === 'order/paid' || $paymentStatus === 'paid');
+                $paymentStatus = strtolower(trim((string)($payload['payment_status'] ?? '')));
+                $orderStatus = strtolower(trim((string)($payload['status'] ?? '')));
 
-            // ----------------------------------------------------
-            // CASO A: CANCELAMENTO DE PEDIDO
-            // ----------------------------------------------------
-            if ($isCancelled) {
-                // Verifica se este pedido já gerou uma venda no eGestor anteriormente
+                $isCancelled = ($event === 'order/cancelled' || $orderStatus === 'cancelled');
+                $isPaid = ($event === 'order/paid' || $paymentStatus === 'paid');
+
+                // ----------------------------------------------------
+                // CASO A: CANCELAMENTO DE PEDIDO
+                // ----------------------------------------------------
+                if ($isCancelled) {
+                    // Verifica se este pedido já gerou uma venda no eGestor anteriormente
+                    $stmtCheck = $db->prepare("SELECT egestor_sale_id FROM orders_sync WHERE nuvemshop_order_id = ? LIMIT 1");
+                    $stmtCheck->execute([$orderId]);
+                    $existingSaleId = $stmtCheck->fetchColumn();
+
+                    if (empty($existingSaleId)) {
+                        // O pedido nunca foi pago e nunca foi lançado no eGestor (ex: PIX expirado/cancelado)
+                        $msg = "Pedido Nuvemshop #{$orderId} cancelado antes da confirmação de pagamento. Nenhuma venda ou baixa havia sido efetuada no eGestor.";
+                        Logger::info($msg);
+                        Database::logSync('nuvemshop', 'order_cancelled_unpaid', (string)$orderId, $msg, 'info');
+
+                        // Atualiza registro no banco local se existir
+                        $db->prepare("UPDATE orders_sync SET status = 'cancelled', details = 'Cancelado na Nuvemshop antes da confirmação de pagamento', updated_at = CURRENT_TIMESTAMP WHERE nuvemshop_order_id = ?")->execute([$orderId]);
+
+                        return [
+                            'success' => true,
+                            'message' => 'Pedido cancelado sem impacto no eGestor'
+                        ];
+                    }
+
+                    // Se tinha venda no eGestor, devolve o estoque dos produtos no eGestor
+                    $products = $payload['products'] ?? [];
+                    $restoredCount = 0;
+                    foreach ($products as $item) {
+                        $sku = trim((string)($item['sku'] ?? ''));
+                        $barcode = trim((string)($item['barcode'] ?? ''));
+                        $qty = (float)($item['quantity'] ?? 1);
+                        $prodName = $item['name'] ?? 'Produto';
+
+                        $egestorId = null;
+                        if ($sku !== '') {
+                            $eP = $this->egestor->findProductBySku($sku);
+                            if ($eP && !empty($eP['codigo'])) $egestorId = (string)$eP['codigo'];
+                        }
+                        if (!$egestorId && $barcode !== '') {
+                            $eP = $this->egestor->findProductByBarcode($barcode);
+                            if ($eP && !empty($eP['codigo'])) $egestorId = (string)$eP['codigo'];
+                        }
+
+                        if ($egestorId) {
+                            $egestorProdRes = $this->egestor->getProduct($egestorId);
+                            if ($egestorProdRes['success']) {
+                                $currentStock = (float)($egestorProdRes['data']['estoque'] ?? 0);
+                                $newStock = $currentStock + $qty;
+                                $upRes = $this->egestor->updateProductStock($egestorId, $newStock);
+                                if ($upRes['success']) {
+                                    $restoredCount++;
+                                    $actionMsg = "Pedido Nuvemshop #{$orderId} CANCELADO: Estoque de {$prodName} (SKU {$sku}) devolvido de {$currentStock} para {$newStock} no eGestor";
+                                    Logger::info($actionMsg);
+                                    Database::logSync('nuvemshop', 'order_stock_restored', (string)$orderId, $actionMsg, 'success');
+                                }
+                            }
+                        }
+                    }
+
+                    $db->prepare("UPDATE orders_sync SET status = 'cancelled', details = 'Pedido cancelado após pagamento. Estoque restaurado no eGestor.', updated_at = CURRENT_TIMESTAMP WHERE nuvemshop_order_id = ?")->execute([$orderId]);
+
+                    return [
+                        'success' => true,
+                        'message' => "Pedido cancelado e estoque restaurado no eGestor ({$restoredCount} itens)"
+                    ];
+                }
+
+                // ----------------------------------------------------
+                // CASO B: PEDIDO CRIADO COM PAGAMENTO PENDENTE (ex: PIX gerado, boleto aguardando)
+                // ----------------------------------------------------
+                if (!$isPaid) {
+                    // Registra o pedido no banco local como 'waiting_payment' para acompanhamento visual
+                    $customer = $payload['customer'] ?? [];
+                    $customerName = trim((string)($customer['name'] ?? ''));
+                    if (empty($customerName)) {
+                        $customerName = trim((string)($payload['billing_address']['first_name'] ?? '') . ' ' . (string)($payload['billing_address']['last_name'] ?? ''));
+                    }
+                    $cleanCpf = preg_replace('/\D/', '', (string)($customer['identification'] ?? $payload['billing_address']['identification'] ?? ''));
+                    $email = trim((string)($customer['email'] ?? $payload['contact_email'] ?? ''));
+                    $phone = (string)($payload['billing_address']['phone'] ?? $customer['phone'] ?? '');
+                    $method = (string)($payload['payment_details']['method'] ?? 'não informado');
+                    $total = (float)($payload['total'] ?? 0);
+
+                    $stmtSave = $db->prepare("INSERT INTO orders_sync (nuvemshop_order_id, customer_name, customer_cpf_cnpj, customer_email, customer_phone, order_total, status, details)
+                        VALUES (?, ?, ?, ?, ?, ?, 'waiting_payment', ?)
+                        ON CONFLICT(nuvemshop_order_id) DO UPDATE SET
+                            customer_name = excluded.customer_name,
+                            customer_cpf_cnpj = excluded.customer_cpf_cnpj,
+                            customer_email = excluded.customer_email,
+                            customer_phone = excluded.customer_phone,
+                            order_total = excluded.order_total,
+                            status = 'waiting_payment',
+                            details = excluded.details,
+                            updated_at = CURRENT_TIMESTAMP");
+                    $stmtSave->execute([
+                        $orderId,
+                        $customerName,
+                        $cleanCpf,
+                        $email,
+                        $phone,
+                        $total,
+                        "Aguardando confirmação do pagamento na Nuvemshop (Status: {$paymentStatus}, Método: {$method})"
+                    ]);
+
+                    $logMsg = "Pedido Nuvemshop #{$orderId} recebido com pagamento pendente ('{$paymentStatus}', Método: {$method}). Aguardando confirmação (order/paid) para lançar no eGestor.";
+                    Logger::info($logMsg);
+                    Database::logSync('nuvemshop', 'order_payment_pending', (string)$orderId, $logMsg, 'info');
+
+                    return [
+                        'success' => true,
+                        'waiting_payment' => true,
+                        'payment_status' => $paymentStatus,
+                        'message' => $logMsg
+                    ];
+                }
+
+                // ----------------------------------------------------
+                // CASO C: PAGAMENTO CONFIRMADO (order/paid ou payment_status === 'paid')
+                // ----------------------------------------------------
+                // Idempotência: Se já temos a venda registrada no eGestor para este pedido, não lança novamente
                 $stmtCheck = $db->prepare("SELECT egestor_sale_id FROM orders_sync WHERE nuvemshop_order_id = ? LIMIT 1");
                 $stmtCheck->execute([$orderId]);
                 $existingSaleId = $stmtCheck->fetchColumn();
 
-                if (empty($existingSaleId)) {
-                    // O pedido nunca foi pago e nunca foi lançado no eGestor (ex: PIX expirado/cancelado)
-                    $msg = "Pedido Nuvemshop #{$orderId} cancelado antes da confirmação de pagamento. Nenhuma venda ou baixa havia sido efetuada no eGestor.";
-                    Logger::info($msg);
-                    Database::logSync('nuvemshop', 'order_cancelled_unpaid', (string)$orderId, $msg, 'info');
-
-                    // Atualiza registro no banco local se existir
-                    $db->prepare("UPDATE orders_sync SET status = 'cancelled', details = 'Cancelado na Nuvemshop antes da confirmação de pagamento', updated_at = CURRENT_TIMESTAMP WHERE nuvemshop_order_id = ?")->execute([$orderId]);
-
+                if (!empty($existingSaleId)) {
+                    Logger::info("Pedido Nuvemshop #{$orderId} já possui venda #{$existingSaleId} lançada no eGestor. Ignorando evento repetido ({$event}).");
                     return [
                         'success' => true,
-                        'message' => 'Pedido cancelado sem impacto no eGestor'
+                        'message' => "Venda já registrada no eGestor (ID #{$existingSaleId})",
+                        'sale_id' => $existingSaleId
                     ];
                 }
 
-                // Se tinha venda no eGestor, devolve o estoque dos produtos no eGestor
-                $products = $payload['products'] ?? [];
-                $restoredCount = 0;
-                foreach ($products as $item) {
-                    $sku = trim((string)($item['sku'] ?? ''));
-                    $barcode = trim((string)($item['barcode'] ?? ''));
-                    $qty = (float)($item['quantity'] ?? 1);
-                    $prodName = $item['name'] ?? 'Produto';
-
-                    $egestorId = null;
-                    if ($sku !== '') {
-                        $eP = $this->egestor->findProductBySku($sku);
-                        if ($eP && !empty($eP['codigo'])) $egestorId = (string)$eP['codigo'];
+                // Cadastra o cliente e lança a venda oficial no eGestor (o eGestor faz a baixa automática de estoque)
+                $saleResult = null;
+                try {
+                    $saleResult = $this->syncOrderCustomerAndSaleToEGestor($payload, $orderId);
+                    $saleCreatedInEGestor = !empty($saleResult['success']) && !empty($saleResult['sale_id']);
+                    if ($saleCreatedInEGestor) {
+                        $saleId = $saleResult['sale_id'];
+                        $successMsg = "Venda oficial #{$saleId} lançada no eGestor com sucesso para o pedido Nuvemshop #{$orderId}! Baixa automática de estoque e lançamento financeiro concluídos.";
+                        Logger::info($successMsg);
+                        Database::logSync('nuvemshop', 'order_stock_deducted', (string)$orderId, $successMsg, 'success');
+                    } else {
+                        $errMsg = $saleResult['error'] ?? 'Falha ao lançar venda no eGestor';
+                        Logger::error("Erro ao registrar venda no eGestor para pedido pago #{$orderId}: {$errMsg}");
                     }
-                    if (!$egestorId && $barcode !== '') {
-                        $eP = $this->egestor->findProductByBarcode($barcode);
-                        if ($eP && !empty($eP['codigo'])) $egestorId = (string)$eP['codigo'];
-                    }
-
-                    if ($egestorId) {
-                        $egestorProdRes = $this->egestor->getProduct($egestorId);
-                        if ($egestorProdRes['success']) {
-                            $currentStock = (float)($egestorProdRes['data']['estoque'] ?? 0);
-                            $newStock = $currentStock + $qty;
-                            $upRes = $this->egestor->updateProductStock($egestorId, $newStock);
-                            if ($upRes['success']) {
-                                $restoredCount++;
-                                $actionMsg = "Pedido Nuvemshop #{$orderId} CANCELADO: Estoque de {$prodName} (SKU {$sku}) devolvido de {$currentStock} para {$newStock} no eGestor";
-                                Logger::info($actionMsg);
-                                Database::logSync('nuvemshop', 'order_stock_restored', (string)$orderId, $actionMsg, 'success');
-                            }
-                        }
-                    }
+                } catch (\Throwable $errSale) {
+                    Logger::error("Erro fatal ao lançar venda no eGestor para pedido pago #{$orderId}: " . $errSale->getMessage());
+                    return ['success' => false, 'error' => $errSale->getMessage()];
                 }
-
-                $db->prepare("UPDATE orders_sync SET status = 'cancelled', details = 'Pedido cancelado após pagamento. Estoque restaurado no eGestor.', updated_at = CURRENT_TIMESTAMP WHERE nuvemshop_order_id = ?")->execute([$orderId]);
 
                 return [
                     'success' => true,
-                    'message' => "Pedido cancelado e estoque restaurado no eGestor ({$restoredCount} itens)"
+                    'order_id' => $orderId,
+                    'sale_sync' => $saleResult
                 ];
+            } finally {
+                $this->releaseOrderLock($lock);
             }
-
-            // ----------------------------------------------------
-            // CASO B: PEDIDO CRIADO COM PAGAMENTO PENDENTE (ex: PIX gerado, boleto aguardando)
-            // ----------------------------------------------------
-            if (!$isPaid) {
-                // Registra o pedido no banco local como 'waiting_payment' para acompanhamento visual
-                $customer = $payload['customer'] ?? [];
-                $customerName = trim((string)($customer['name'] ?? ''));
-                if (empty($customerName)) {
-                    $customerName = trim((string)($payload['billing_address']['first_name'] ?? '') . ' ' . (string)($payload['billing_address']['last_name'] ?? ''));
-                }
-                $cleanCpf = preg_replace('/\D/', '', (string)($customer['identification'] ?? $payload['billing_address']['identification'] ?? ''));
-                $email = trim((string)($customer['email'] ?? $payload['contact_email'] ?? ''));
-                $phone = (string)($payload['billing_address']['phone'] ?? $customer['phone'] ?? '');
-                $method = (string)($payload['payment_details']['method'] ?? 'não informado');
-                $total = (float)($payload['total'] ?? 0);
-
-                $stmtSave = $db->prepare("INSERT INTO orders_sync (nuvemshop_order_id, customer_name, customer_cpf_cnpj, customer_email, customer_phone, order_total, status, details)
-                    VALUES (?, ?, ?, ?, ?, ?, 'waiting_payment', ?)
-                    ON CONFLICT(nuvemshop_order_id) DO UPDATE SET
-                        customer_name = excluded.customer_name,
-                        customer_cpf_cnpj = excluded.customer_cpf_cnpj,
-                        customer_email = excluded.customer_email,
-                        customer_phone = excluded.customer_phone,
-                        order_total = excluded.order_total,
-                        status = 'waiting_payment',
-                        details = excluded.details,
-                        updated_at = CURRENT_TIMESTAMP");
-                $stmtSave->execute([
-                    $orderId,
-                    $customerName,
-                    $cleanCpf,
-                    $email,
-                    $phone,
-                    $total,
-                    "Aguardando confirmação do pagamento na Nuvemshop (Status: {$paymentStatus}, Método: {$method})"
-                ]);
-
-                $logMsg = "Pedido Nuvemshop #{$orderId} recebido com pagamento pendente ('{$paymentStatus}', Método: {$method}). Aguardando confirmação (order/paid) para lançar no eGestor.";
-                Logger::info($logMsg);
-                Database::logSync('nuvemshop', 'order_payment_pending', (string)$orderId, $logMsg, 'info');
-
-                return [
-                    'success' => true,
-                    'waiting_payment' => true,
-                    'payment_status' => $paymentStatus,
-                    'message' => $logMsg
-                ];
-            }
-
-            // ----------------------------------------------------
-            // CASO C: PAGAMENTO CONFIRMADO (order/paid ou payment_status === 'paid')
-            // ----------------------------------------------------
-            // Idempotência: Se já temos a venda registrada no eGestor para este pedido, não lança novamente
-            $stmtCheck = $db->prepare("SELECT egestor_sale_id FROM orders_sync WHERE nuvemshop_order_id = ? LIMIT 1");
-            $stmtCheck->execute([$orderId]);
-            $existingSaleId = $stmtCheck->fetchColumn();
-
-            if (!empty($existingSaleId)) {
-                Logger::info("Pedido Nuvemshop #{$orderId} já possui venda #{$existingSaleId} lançada no eGestor. Ignorando evento repetido ({$event}).");
-                return [
-                    'success' => true,
-                    'message' => "Venda já registrada no eGestor (ID #{$existingSaleId})",
-                    'sale_id' => $existingSaleId
-                ];
-            }
-
-            // Cadastra o cliente e lança a venda oficial no eGestor (o eGestor faz a baixa automática de estoque)
-            $saleResult = null;
-            try {
-                $saleResult = $this->syncOrderCustomerAndSaleToEGestor($payload, $orderId);
-                $saleCreatedInEGestor = !empty($saleResult['success']) && !empty($saleResult['sale_id']);
-                if ($saleCreatedInEGestor) {
-                    $saleId = $saleResult['sale_id'];
-                    $successMsg = "Venda oficial #{$saleId} lançada no eGestor com sucesso para o pedido Nuvemshop #{$orderId}! Baixa automática de estoque e lançamento financeiro concluídos.";
-                    Logger::info($successMsg);
-                    Database::logSync('nuvemshop', 'order_stock_deducted', (string)$orderId, $successMsg, 'success');
-                } else {
-                    $errMsg = $saleResult['error'] ?? 'Falha ao lançar venda no eGestor';
-                    Logger::error("Erro ao registrar venda no eGestor para pedido pago #{$orderId}: {$errMsg}");
-                }
-            } catch (\Throwable $errSale) {
-                Logger::error("Erro fatal ao lançar venda no eGestor para pedido pago #{$orderId}: " . $errSale->getMessage());
-                return ['success' => false, 'error' => $errSale->getMessage()];
-            }
-
-            return [
-                'success' => true,
-                'order_id' => $orderId,
-                'sale_sync' => $saleResult
-            ];
         }
 
         // 2. Tratamento de alteração de produto na Nuvemshop (NUNCA altera o eGestor)

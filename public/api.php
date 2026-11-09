@@ -296,7 +296,7 @@ try {
                 $webhookUrl = rtrim($envUrl ?: 'https://' . ($_SERVER['HTTP_HOST'] ?? 'localhost'), '/') . '/webhook-nuvemshop.php';
             }
 
-            $events = ['order/created', 'order/paid', 'order/updated', 'order/cancelled', 'product/updated'];
+            $events = ['order/created', 'order/paid', 'order/cancelled', 'product/updated'];
             $existing = $nuvemshop->listWebhooks();
             $existingUrls = [];
             if ($existing['success'] && is_array($existing['data'])) {
@@ -511,8 +511,21 @@ try {
             $realOrderId = (string)($orderData['id'] ?? $orderId);
             $force = filter_var($_POST['force'] ?? $_GET['force'] ?? false, FILTER_VALIDATE_BOOLEAN);
 
-            $res = $syncService->syncOrderCustomerAndSaleToEGestor($orderData, $realOrderId, $force);
-            echo json_encode($res);
+            $lock = $syncService->acquireOrderLock($realOrderId);
+            if (!$lock) {
+                echo json_encode([
+                    'success' => false,
+                    'error' => "O pedido #{$realOrderId} já está sendo processado por outra requisição. Aguarde alguns instantes."
+                ]);
+                exit;
+            }
+
+            try {
+                $res = $syncService->syncOrderCustomerAndSaleToEGestor($orderData, $realOrderId, $force);
+                echo json_encode($res);
+            } finally {
+                $syncService->releaseOrderLock($lock);
+            }
             break;
 
         default:
