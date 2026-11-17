@@ -683,4 +683,18 @@ class EGestorClient {
         $query = http_build_query(array_merge(['page' => $page], $params));
         return $this->request('GET', '/compras?' . $query);
     }
+
+    /**
+     * Consulta detalhes de um ajuste de estoque no eGestor
+     */
+    public function getAjusteEstoque(int|string $codAjuste): array {
+        return $this->request('GET', "/ajusteEstoque/{$codAjuste}");
+    }
+
+    /**
+     * Consulta configurações de webhooks cadastradas no eGestor
+     */
+    public function getWebhookConfig(): array {
+        return $this->request('GET', '/webhooks');
+    }
 }

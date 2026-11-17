@@ -132,29 +132,43 @@ class SyncService {
 
         $module = strtolower(trim($payload['module'] ?? ''));
         $action = strtolower(trim($payload['action'] ?? ''));
-        $codigo = trim((string)($payload['codigo'] ?? ''));
+        $codigo = trim((string)($payload['codigo'] ?? $payload['id'] ?? ''));
 
         if ($codigo === '') {
             return ['success' => false, 'error' => 'Código do registro ausente no payload.', 'code' => 400];
         }
 
-        if ($module === 'produtos') {
-            // Regra 1: Todo cadastro feito no eGestor não deve ir automaticamente para a Nuvemshop
-            if ($action === 'created') {
+        // 1. Alteração / Correção direta no cadastro ou estoque do Produto
+        if ($module === 'produtos' || $module === 'produto') {
+            // Regra 1: Todo cadastro novo feito no eGestor não deve ir automaticamente para a Nuvemshop
+            if ($action === 'created' || $action === 'create') {
                 $msg = "Produto criado no eGestor [ID {$codigo}]. Criação automática na Nuvemshop desativada conforme regra do sistema.";
                 Logger::info($msg);
                 Database::logSync('egestor', 'product_created_skipped', $codigo, $msg, 'info');
                 return ['success' => true, 'message' => $msg, 'skipped' => true];
             }
+            // Toda correção de estoque, edição ou movimentação do produto reflete na Nuvemshop
             return $this->syncProductFromEGestor($codigo, $action);
         }
 
-        if ($module === 'vendas') {
+        // 2. Venda realizada no PDV / Balcão físico (baixa de estoque imediata)
+        if ($module === 'vendas' || $module === 'venda') {
             return $this->syncSaleFromEGestor($codigo);
         }
 
-        if ($module === 'compras' || $module === 'compras_itens') {
+        // 3. Compras / Entrada de mercadorias no eGestor (aumento de estoque)
+        if ($module === 'compras' || $module === 'compra' || $module === 'compras_itens') {
             return $this->syncPurchaseFromEGestor($codigo);
+        }
+
+        // 4. Ajustes manuais de estoque / Balanço no eGestor
+        if ($module === 'ajusteestoque' || $module === 'ajuste_estoque' || $module === 'ajustes' || $module === 'ajuste' || $module === 'estoque') {
+            return $this->syncAjusteEstoqueFromEGestor($codigo);
+        }
+
+        // 5. Devoluções de vendas no eGestor (retorno ao estoque)
+        if ($module === 'devolucao' || $module === 'devolucoes') {
+            return $this->syncDevolucaoFromEGestor($codigo);
         }
 
         Database::logSync('egestor', "module_{$module}", $codigo, "Evento ignorado (módulo {$module} não requer sync de estoque)", 'warning');
@@ -209,6 +223,9 @@ class SyncService {
             // Fallback: se não estiver no índice em memória, busca direto na API da Nuvemshop
             if (!$nuvemMatch) {
                 $searchResult = $this->nuvemshop->findProductVariantBySku($sku);
+                if (!$searchResult && (string)$codigo !== $sku) {
+                    $searchResult = $this->nuvemshop->findProductVariantBySku((string)$codigo);
+                }
                 if (!$searchResult && $barcode !== '') {
                     $searchResult = $this->nuvemshop->findProductVariantByBarcode($barcode);
                 }
@@ -380,6 +397,67 @@ class SyncService {
 
         Database::logSync('egestor', 'purchase_completed', $codigoCompra, "Compra/Entrada no eGestor registrada.", 'success');
         return ['success' => true, 'message' => 'Compra registrada com sucesso'];
+    }
+
+    /**
+     * Sincroniza ajuste/correção de estoque efetuado no eGestor (Ajuste de Estoque / Balanço)
+     */
+    public function syncAjusteEstoqueFromEGestor(string $codigoAjuste): array {
+        Logger::info("Ajuste/correção de estoque recebido do eGestor [ID: {$codigoAjuste}]. Sincronizando produtos na Nuvemshop...");
+        $synced = 0;
+
+        try {
+            $ajusteRes = $this->egestor->getAjusteEstoque($codigoAjuste);
+            if ($ajusteRes['success'] && !empty($ajusteRes['data']['produtos'])) {
+                foreach ($ajusteRes['data']['produtos'] as $item) {
+                    $codProd = $item['codProduto'] ?? null;
+                    if ($codProd) {
+                        $syncRes = $this->syncProductFromEGestor((string)$codProd, 'stock_adjustment_sync', false);
+                        if (!empty($syncRes['success']) && empty($syncRes['skipped'])) {
+                            $synced++;
+                        }
+                    }
+                }
+                $msg = "Ajuste de estoque concluído. {$synced} produto(s) atualizados na Nuvemshop.";
+                Database::logSync('egestor', 'stock_adjustment_completed', $codigoAjuste, $msg, 'success');
+                return ['success' => true, 'message' => $msg, 'synced_items' => $synced];
+            }
+        } catch (\Throwable $e) {
+            Logger::error("Erro ao sincronizar produtos do ajuste de estoque #{$codigoAjuste}: " . $e->getMessage());
+        }
+
+        // Se o código recebido for diretamente o ID do produto alterado (ou getAjusteEstoque não retornar array)
+        return $this->syncProductFromEGestor($codigoAjuste, 'stock_adjustment_sync', false);
+    }
+
+    /**
+     * Sincroniza devolução efetuada no eGestor (retorno de mercadoria ao estoque)
+     */
+    public function syncDevolucaoFromEGestor(string $codigoDevolucao): array {
+        Logger::info("Devolução recebida do eGestor [ID: {$codigoDevolucao}]. Sincronizando produtos na Nuvemshop...");
+        $synced = 0;
+
+        try {
+            $devRes = $this->egestor->getSale($codigoDevolucao);
+            if ($devRes['success'] && !empty($devRes['data']['produtos'])) {
+                foreach ($devRes['data']['produtos'] as $item) {
+                    $codProd = $item['codProduto'] ?? null;
+                    if ($codProd) {
+                        $syncRes = $this->syncProductFromEGestor((string)$codProd, 'devolucao_stock_sync', false);
+                        if (!empty($syncRes['success']) && empty($syncRes['skipped'])) {
+                            $synced++;
+                        }
+                    }
+                }
+                $msg = "Devolução concluída. {$synced} produto(s) atualizados na Nuvemshop.";
+                Database::logSync('egestor', 'devolucao_completed', $codigoDevolucao, $msg, 'success');
+                return ['success' => true, 'message' => $msg, 'synced_items' => $synced];
+            }
+        } catch (\Throwable $e) {
+            Logger::error("Erro ao sincronizar produtos da devolução #{$codigoDevolucao}: " . $e->getMessage());
+        }
+
+        return $this->syncProductFromEGestor($codigoDevolucao, 'devolucao_stock_sync', false);
     }
 
     /**
