@@ -332,6 +332,9 @@ async function loadProductsList(page = 1) {
                 statusHtml = `<span class="status-badge online"><span class="status-dot"></span> Na Nuvemshop (#${p.nuvemshop_product_id})</span>`;
                 actionHtml = `
                     <div style="display: flex; gap: 6px; justify-content: flex-end;">
+                        <button class="btn btn-secondary btn-sm" onclick="openStockModalForProduct('${p.codigo}')" title="Ajustar estoque no eGestor">
+                            📦 Estoque
+                        </button>
                         <button class="btn btn-secondary btn-sm" onclick="syncSingleProduct('${p.codigo}')" title="Sincronizar estoque do eGestor para a Nuvemshop">
                             🔄 Sincronizar
                         </button>
@@ -344,6 +347,9 @@ async function loadProductsList(page = 1) {
                 statusHtml = `<span class="status-badge neutral"><span class="status-dot"></span> Não Cadastrado</span>`;
                 actionHtml = `
                     <div style="display: flex; gap: 6px; justify-content: flex-end;">
+                        <button class="btn btn-secondary btn-sm" onclick="openStockModalForProduct('${p.codigo}')" title="Ajustar estoque no eGestor">
+                            📦 Estoque
+                        </button>
                         <button class="btn btn-primary btn-sm" onclick="sendProductToNuvem('${p.codigo}', true)" title="Cadastrar e enviar este produto para a Nuvemshop">
                             ⚡ Enviar para Nuvem
                         </button>
@@ -362,7 +368,12 @@ async function loadProductsList(page = 1) {
                     <td><span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">${p.sku || '-'}</span></td>
                     <td><span style="font-family: var(--font-mono); font-size: 11px; color: var(--text-dim);">${p.barcode || '-'}</span></td>
                     <td><strong>${escapeHtml(p.nome)}</strong></td>
-                    <td>${stockBadge}</td>
+                    <td>
+                        <div style="display: inline-flex; align-items: center; gap: 6px;">
+                            ${stockBadge}
+                            <button class="btn-stock-quick" onclick="openStockModalForProduct('${p.codigo}')" title="Ajustar estoque deste item no eGestor">✏️</button>
+                        </div>
+                    </td>
                     <td>${nuvemStockBadge}</td>
                     <td>${p.preco ? 'R$ ' + parseFloat(p.preco).toFixed(2) : '-'}</td>
                     <td>${statusHtml}</td>
@@ -1876,6 +1887,415 @@ async function submitUnifyProducts() {
     } finally {
         btn.disabled = false;
         btn.innerHTML = originalText;
+    }
+}
+
+// ========================================================
+// MANIPULAÇÃO DE ESTOQUE NO EGESTOR (PDV & NUVEMSHOP)
+// ========================================================
+window.stockModalState = {
+    currentProduct: null,
+    mode: 'set' // 'set', 'add', 'sub'
+};
+
+function openAdjustStockModal(preloadedProduct = null) {
+    const modal = document.getElementById('adjust-stock-modal');
+    if (!modal) return;
+
+    const statusBox = document.getElementById('stock-modal-status-box');
+    if (statusBox) statusBox.style.display = 'none';
+
+    if (preloadedProduct) {
+        displayProductInStockModal(preloadedProduct);
+    } else {
+        resetStockModalSearch();
+    }
+
+    modal.style.display = 'flex';
+}
+
+function closeAdjustStockModal() {
+    const modal = document.getElementById('adjust-stock-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+function resetStockModalSearch() {
+    window.stockModalState.currentProduct = null;
+    const searchSection = document.getElementById('stock-modal-search-section');
+    const searchInput = document.getElementById('stock-modal-search-input');
+    const productCard = document.getElementById('stock-modal-product-card');
+    const adjustSection = document.getElementById('stock-modal-adjust-section');
+    const btnSave = document.getElementById('btn-save-adjust-stock');
+
+    if (searchSection) searchSection.style.display = 'block';
+    if (searchInput) {
+        searchInput.value = '';
+        setTimeout(() => searchInput.focus(), 100);
+    }
+    if (productCard) productCard.style.display = 'none';
+    if (adjustSection) adjustSection.style.display = 'none';
+    if (btnSave) btnSave.disabled = true;
+}
+
+async function openStockModalForProduct(codigo) {
+    openAdjustStockModal();
+
+    // Procura na lista carregada em memória se já temos os dados
+    let localProd = null;
+    if (window.currentProductsList && Array.isArray(window.currentProductsList)) {
+        localProd = window.currentProductsList.find(p => String(p.codigo) === String(codigo));
+    }
+
+    if (localProd) {
+        displayProductInStockModal(localProd);
+        return;
+    }
+
+    // Caso não esteja na lista visível, busca na API
+    const searchInput = document.getElementById('stock-modal-search-input');
+    if (searchInput) searchInput.value = codigo;
+    await fetchProductForStockModal(codigo);
+}
+
+async function fetchProductForStockModal(customCode = null) {
+    const searchInput = document.getElementById('stock-modal-search-input');
+    const code = customCode || (searchInput ? searchInput.value.trim() : '');
+    const searchBtn = document.getElementById('btn-search-stock-prod');
+
+    if (!code) {
+        showToast('Digite o código ou SKU do produto para buscar', 'warning');
+        return;
+    }
+
+    const origBtnHtml = searchBtn ? searchBtn.innerHTML : '';
+    if (searchBtn) {
+        searchBtn.disabled = true;
+        searchBtn.innerHTML = '⏳ Buscando...';
+    }
+
+    try {
+        const res = await fetch(`api.php?action=get_egestor_product&codigo=${encodeURIComponent(code)}`);
+        const data = await res.json();
+
+        if (data.success && data.product) {
+            displayProductInStockModal(data.product);
+        } else {
+            showToast(data.error || 'Produto não encontrado no eGestor.', 'error');
+        }
+    } catch (err) {
+        showToast('Erro ao buscar produto: ' + err.message, 'error');
+    } finally {
+        if (searchBtn) {
+            searchBtn.disabled = false;
+            searchBtn.innerHTML = origBtnHtml;
+        }
+    }
+}
+
+function displayProductInStockModal(prod) {
+    window.stockModalState.currentProduct = prod;
+
+    const searchSection = document.getElementById('stock-modal-search-section');
+    const productCard = document.getElementById('stock-modal-product-card');
+    const adjustSection = document.getElementById('stock-modal-adjust-section');
+    const btnSave = document.getElementById('btn-save-adjust-stock');
+
+    if (searchSection) searchSection.style.display = 'none';
+    if (productCard) productCard.style.display = 'block';
+    if (adjustSection) adjustSection.style.display = 'block';
+    if (btnSave) btnSave.disabled = false;
+
+    // Preenche card do produto
+    const nameEl = document.getElementById('stock-card-name');
+    const codEl = document.getElementById('stock-card-codigo');
+    const skuEl = document.getElementById('stock-card-sku');
+    const barcodeWrap = document.getElementById('stock-card-barcode-wrap');
+    const barcodeEl = document.getElementById('stock-card-barcode');
+    const priceEl = document.getElementById('stock-card-price');
+    const currBadge = document.getElementById('stock-card-current-badge');
+    const nuvemBadge = document.getElementById('stock-card-nuvem-badge');
+
+    if (nameEl) nameEl.textContent = prod.nome || prod.name || `Produto #${prod.codigo}`;
+    if (codEl) codEl.textContent = prod.codigo;
+    if (skuEl) skuEl.textContent = prod.sku || '-';
+    if (barcodeWrap && barcodeEl) {
+        if (prod.barcode) {
+            barcodeWrap.style.display = 'inline';
+            barcodeEl.textContent = prod.barcode;
+        } else {
+            barcodeWrap.style.display = 'none';
+        }
+    }
+    if (priceEl) {
+        const pVal = parseFloat(prod.preco || 0);
+        priceEl.textContent = pVal > 0 ? 'R$ ' + pVal.toFixed(2) : '-';
+    }
+
+    const currentStock = parseFloat(prod.estoque !== undefined ? prod.estoque : (prod.stock || 0));
+    if (currBadge) {
+        currBadge.textContent = `${currentStock} un`;
+        currBadge.className = 'stock-tag ' + (currentStock > 3 ? 'in-stock' : (currentStock > 0 ? 'low-stock' : 'out-of-stock'));
+    }
+
+    if (nuvemBadge) {
+        if (prod.in_nuvemshop) {
+            const nStock = prod.nuvemshop_stock !== null && prod.nuvemshop_stock !== undefined ? prod.nuvemshop_stock : (prod.stock_nuvemshop ?? currentStock);
+            nuvemBadge.innerHTML = `<span class="stock-tag in-stock" style="font-size: 11px;">✅ Na Loja (${nStock} un)</span>`;
+        } else {
+            nuvemBadge.innerHTML = `<span class="stock-tag neutral" style="font-size: 11px;">⚠️ Não Publicado</span>`;
+        }
+    }
+
+    // Inicializa modo 'set' com o estoque atual
+    setAdjustStockMode('set', currentStock);
+}
+
+function setAdjustStockMode(mode, initialVal = null) {
+    window.stockModalState.mode = mode;
+
+    // Atualiza botões de modo
+    const modes = ['set', 'add', 'sub'];
+    modes.forEach(m => {
+        const btn = document.getElementById(`mode-btn-${m}`);
+        if (btn) {
+            if (m === mode) {
+                btn.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+            }
+        }
+    });
+
+    const inputLabel = document.getElementById('stock-input-label');
+    const valInput = document.getElementById('stock-adjust-value');
+
+    const currProd = window.stockModalState.currentProduct;
+    const currentStock = currProd ? parseFloat(currProd.estoque !== undefined ? currProd.estoque : (currProd.stock || 0)) : 0;
+
+    if (mode === 'set') {
+        if (inputLabel) inputLabel.textContent = 'Novo Estoque Exato:';
+        if (valInput) {
+            valInput.value = initialVal !== null ? initialVal : currentStock;
+            valInput.min = '0';
+        }
+    } else if (mode === 'add') {
+        if (inputLabel) inputLabel.textContent = 'Quantidade a Adicionar (+):';
+        if (valInput) {
+            valInput.value = initialVal !== null ? initialVal : 1;
+            valInput.min = '1';
+        }
+    } else if (mode === 'sub') {
+        if (inputLabel) inputLabel.textContent = 'Quantidade a Subtrair (-):';
+        if (valInput) {
+            valInput.value = initialVal !== null ? initialVal : 1;
+            valInput.min = '1';
+        }
+    }
+
+    renderStockQuickButtons(mode);
+    updateCalculatedStockPreview();
+    if (valInput) {
+        setTimeout(() => valInput.select(), 50);
+    }
+}
+
+function renderStockQuickButtons(mode) {
+    const container = document.getElementById('stock-quick-buttons');
+    if (!container) return;
+
+    let buttons = [];
+    if (mode === 'set') {
+        buttons = [
+            { label: '0 (Zerar)', val: 0 },
+            { label: '1', val: 1 },
+            { label: '2', val: 2 },
+            { label: '5', val: 5 },
+            { label: '10', val: 10 },
+            { label: '20', val: 20 }
+        ];
+    } else if (mode === 'add') {
+        buttons = [
+            { label: '+1', val: 1 },
+            { label: '+2', val: 2 },
+            { label: '+3', val: 3 },
+            { label: '+5', val: 5 },
+            { label: '+10', val: 10 },
+            { label: '+20', val: 20 }
+        ];
+    } else if (mode === 'sub') {
+        buttons = [
+            { label: '-1', val: 1 },
+            { label: '-2', val: 2 },
+            { label: '-3', val: 3 },
+            { label: '-5', val: 5 },
+            { label: '-10', val: 10 }
+        ];
+    }
+
+    container.innerHTML = buttons.map(b => `
+        <button type="button" class="stock-quick-btn" onclick="applyQuickStockDelta(${b.val})">
+            ${b.label}
+        </button>
+    `).join('');
+}
+
+function applyQuickStockDelta(val) {
+    const valInput = document.getElementById('stock-adjust-value');
+    if (!valInput) return;
+    valInput.value = val;
+    updateCalculatedStockPreview();
+}
+
+function updateCalculatedStockPreview() {
+    const currProd = window.stockModalState.currentProduct;
+    if (!currProd) return;
+
+    const currentStock = parseFloat(currProd.estoque !== undefined ? currProd.estoque : (currProd.stock || 0));
+    const valInput = document.getElementById('stock-adjust-value');
+    const inputVal = parseFloat(valInput ? valInput.value : 0) || 0;
+    const mode = window.stockModalState.mode;
+
+    let finalStock = currentStock;
+    if (mode === 'set') {
+        finalStock = Math.max(0, inputVal);
+    } else if (mode === 'add') {
+        finalStock = Math.max(0, currentStock + inputVal);
+    } else if (mode === 'sub') {
+        finalStock = Math.max(0, currentStock - inputVal);
+    }
+
+    const currEl = document.getElementById('preview-curr-stock');
+    const newEl = document.getElementById('preview-new-stock');
+    const diffTag = document.getElementById('preview-diff-tag');
+
+    if (currEl) currEl.textContent = currentStock;
+    if (newEl) newEl.textContent = finalStock;
+
+    if (diffTag) {
+        const diff = finalStock - currentStock;
+        if (diff > 0) {
+            diffTag.textContent = `+${diff}`;
+            diffTag.className = 'stock-tag in-stock';
+        } else if (diff < 0) {
+            diffTag.textContent = `${diff}`;
+            diffTag.className = 'stock-tag out-of-stock';
+        } else {
+            diffTag.textContent = 'Sem alteração';
+            diffTag.className = 'stock-tag low-stock';
+        }
+    }
+}
+
+async function submitAdjustStock() {
+    const currProd = window.stockModalState.currentProduct;
+    if (!currProd) {
+        showToast('Nenhum produto selecionado.', 'warning');
+        return;
+    }
+
+    const codigo = currProd.codigo;
+    const mode = window.stockModalState.mode;
+    const valInput = document.getElementById('stock-adjust-value');
+    const value = parseFloat(valInput ? valInput.value : 0) || 0;
+    const syncNuvemCheck = document.getElementById('stock-sync-nuvemshop-check');
+    const syncNuvem = syncNuvemCheck ? syncNuvemCheck.checked : true;
+
+    const btn = document.getElementById('btn-save-adjust-stock');
+    const statusBox = document.getElementById('stock-modal-status-box');
+    const originalText = btn ? btn.innerHTML : 'Salvar';
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Atualizando...';
+    }
+
+    if (statusBox) {
+        statusBox.style.display = 'block';
+        statusBox.style.background = '#f8fafc';
+        statusBox.style.border = '1px solid #cbd5e1';
+        statusBox.style.color = '#334155';
+        statusBox.innerHTML = `⏳ Atualizando estoque no eGestor${syncNuvem ? ' e sincronizando na Nuvemshop...' : '...'}`;
+    }
+
+    try {
+        const res = await fetch('api.php?action=adjust_egestor_stock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                codigo: codigo,
+                type: mode,
+                value: value,
+                sync_nuvem: syncNuvem
+            })
+        });
+
+        const data = await res.json();
+
+        if (data.success) {
+            const newStock = data.new_stock;
+            showToast(`Estoque de '${currProd.nome || currProd.name || codigo}' atualizado para ${newStock} un!`, 'success');
+
+            if (statusBox) {
+                let nuvemInfo = '';
+                if (data.sync_nuvemshop) {
+                    if (data.sync_nuvemshop.skipped) {
+                        nuvemInfo = '<br><span style="color: #64748b; font-size: 12px;">ℹ️ O produto não está na Nuvemshop (atualizado apenas no eGestor).</span>';
+                    } else if (data.sync_nuvemshop.success) {
+                        nuvemInfo = '<br><span style="color: #059669; font-size: 12px;">✅ Sincronizado com a Nuvemshop em tempo real!</span>';
+                    }
+                }
+
+                statusBox.style.background = '#f0fdf4';
+                statusBox.style.border = '1px solid #bbf7d0';
+                statusBox.style.color = '#166534';
+                statusBox.innerHTML = `✅ <strong>Sucesso!</strong> Estoque atualizado no eGestor para <strong>${newStock} un</strong>.${nuvemInfo}`;
+            }
+
+            // Atualiza o item local na lista para refletir imediatamente sem recarregar a página inteira
+            if (window.currentProductsList && Array.isArray(window.currentProductsList)) {
+                const found = window.currentProductsList.find(p => String(p.codigo) === String(codigo));
+                if (found) {
+                    found.estoque = newStock;
+                    if (found.in_nuvemshop && syncNuvem) {
+                        found.stock_nuvemshop = newStock;
+                    }
+                }
+            }
+
+            // Atualiza os dados na modal atual
+            currProd.estoque = newStock;
+            if (currProd.in_nuvemshop && syncNuvem) {
+                currProd.nuvemshop_stock = newStock;
+            }
+
+            setTimeout(() => {
+                closeAdjustStockModal();
+                loadProductsList(window.currentProductsPage || 1);
+                loadLogs();
+            }, 1400);
+
+        } else {
+            showToast('Erro ao atualizar estoque: ' + (data.error || 'Falha'), 'error');
+            if (statusBox) {
+                statusBox.style.background = '#fef2f2';
+                statusBox.style.border = '1px solid #fecaca';
+                statusBox.style.color = '#991b1b';
+                statusBox.innerHTML = `❌ <strong>Erro:</strong> ${escapeHtml(data.error || 'Falha ao processar')}`;
+            }
+        }
+    } catch (err) {
+        showToast('Erro ao se comunicar com o servidor: ' + err.message, 'error');
+        if (statusBox) {
+            statusBox.style.background = '#fef2f2';
+            statusBox.style.border = '1px solid #fecaca';
+            statusBox.style.color = '#991b1b';
+            statusBox.innerHTML = `❌ <strong>Erro:</strong> ${escapeHtml(err.message)}`;
+        }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalText;
+        }
     }
 }
 

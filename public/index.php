@@ -183,6 +183,9 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
           </div>
 
           <div style="display: flex; gap: 8px; align-items: center;">
+            <button class="btn btn-secondary btn-sm" id="btn-open-adjust-stock" onclick="openAdjustStockModal()" style="border-color: #0ea5e9; color: #0284c7; font-weight: 600; display: inline-flex; align-items: center; gap: 5px;" title="Ajustar estoque de qualquer produto no eGestor com sincronização na Nuvemshop">
+              📦 Ajustar Estoque
+            </button>
             <button class="btn btn-secondary btn-sm" id="btn-open-unify-modal" onclick="openUnifyModal()" style="border-color: #6366f1; color: #6366f1; font-weight: 600; display: inline-flex; align-items: center; gap: 5px;" disabled title="Selecione 2 ou mais produtos com as caixas de seleção da tabela para agrupar em um único anúncio com variações">
               🔗 Unificar em Grade (<span id="unify-selected-count">0</span>)
             </button>
@@ -928,6 +931,128 @@ $nuvemshopWebhookUrl = $currentBaseUrl . '/webhook-nuvemshop.php';
           🚀 Criar Produto com Grade na Nuvemshop
         </button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Ajustar Estoque no eGestor -->
+<div class="modal-backdrop" id="adjust-stock-modal" style="display: none;">
+  <div class="modal" style="max-width: 600px;">
+    <div class="modal-header">
+      <div>
+        <h3 style="display: flex; align-items: center; gap: 8px;">
+          <span>📦</span> Ajustar Estoque no eGestor (PDV)
+        </h3>
+        <p style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">
+          Altere o estoque no eGestor com sincronização em tempo real na Nuvemshop.
+        </p>
+      </div>
+      <button class="modal-close" onclick="closeAdjustStockModal()">&times;</button>
+    </div>
+
+    <div style="overflow-y: auto; padding: 4px 2px; flex: 1;">
+      <!-- Campo de Busca de Produto -->
+      <div id="stock-modal-search-section" style="margin-bottom: 16px;">
+        <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">Buscar Produto no eGestor (Código ou SKU):</label>
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="stock-modal-search-input" class="form-control" placeholder="Digite o código (ex: 1939) ou SKU..." onkeydown="if(event.key==='Enter'){event.preventDefault();fetchProductForStockModal();}">
+          <button type="button" class="btn btn-primary btn-sm" onclick="fetchProductForStockModal()" id="btn-search-stock-prod" style="white-space: nowrap; padding: 0 16px;">
+            🔍 Buscar
+          </button>
+        </div>
+      </div>
+
+      <!-- Card do Produto Selecionado -->
+      <div id="stock-modal-product-card" style="display: none; background: #f8fafc; border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 10px;">
+          <div style="flex: 1;">
+            <h4 id="stock-card-name" style="font-size: 14px; font-weight: 700; color: var(--text-main); margin-bottom: 4px;">-</h4>
+            <div style="font-size: 12px; color: var(--text-muted); display: flex; gap: 12px; flex-wrap: wrap;">
+              <span>Cód: <strong id="stock-card-codigo" style="font-family: var(--font-mono); color: var(--text-main);">-</strong></span>
+              <span>SKU: <strong id="stock-card-sku" style="font-family: var(--font-mono); color: var(--text-main);">-</strong></span>
+              <span id="stock-card-barcode-wrap" style="display: none;">Barras: <strong id="stock-card-barcode" style="font-family: var(--font-mono);">-</strong></span>
+              <span>Preço: <strong id="stock-card-price" style="color: #059669;">-</strong></span>
+            </div>
+          </div>
+          <button type="button" class="btn btn-secondary btn-sm" onclick="resetStockModalSearch()" style="font-size: 11px; padding: 3px 8px;" title="Buscar outro produto">Trocar</button>
+        </div>
+
+        <!-- Badges de Estoque Atual -->
+        <div style="display: flex; gap: 10px; flex-wrap: wrap; padding-top: 10px; border-top: 1px dashed var(--border-color);">
+          <div style="background: #ffffff; border: 1px solid var(--border-color); border-radius: 6px; padding: 6px 12px; display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Estoque Atual PDV:</span>
+            <span id="stock-card-current-badge" class="stock-tag in-stock" style="font-size: 13px; font-weight: 700;">-</span>
+          </div>
+          <div style="background: #ffffff; border: 1px solid var(--border-color); border-radius: 6px; padding: 6px 12px; display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Nuvemshop:</span>
+            <span id="stock-card-nuvem-badge" style="font-size: 12px;">-</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Configuração de Ajuste (Modos: Definir, Adicionar, Subtrair) -->
+      <div id="stock-modal-adjust-section" style="display: none;">
+        <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 8px;">Tipo de Operação:</label>
+        <div class="stock-mode-selector" style="display: flex; gap: 8px; margin-bottom: 14px;">
+          <button type="button" class="stock-mode-btn active" id="mode-btn-set" onclick="setAdjustStockMode('set')">
+            🎯 Definir Estoque Exato
+          </button>
+          <button type="button" class="stock-mode-btn" id="mode-btn-add" onclick="setAdjustStockMode('add')">
+            ➕ Adicionar (+)
+          </button>
+          <button type="button" class="stock-mode-btn" id="mode-btn-sub" onclick="setAdjustStockMode('sub')">
+            ➖ Subtrair (-)
+          </button>
+        </div>
+
+        <!-- Campo Numérico e Botões Rápidos -->
+        <div style="background: #ffffff; border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 14px; margin-bottom: 16px;">
+          <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 10px;">
+            <div style="flex: 1;">
+              <label id="stock-input-label" style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 4px;">Novo Estoque:</label>
+              <input type="number" id="stock-adjust-value" class="form-control" min="0" step="1" value="0" style="font-size: 18px; font-weight: 700; height: 42px; text-align: center;" oninput="updateCalculatedStockPreview()">
+            </div>
+            <div style="display: flex; flex-direction: column; justify-content: center;">
+              <span style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Atalhos Rápidos:</span>
+              <div id="stock-quick-buttons" style="display: flex; gap: 6px; flex-wrap: wrap;">
+                <!-- Preenchido via JS conforme o modo -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Preview da Mudança -->
+          <div id="stock-preview-box" style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+            <span style="color: #1e40af; font-weight: 600;">Resultado:</span>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="color: var(--text-muted);">Atual: <strong id="preview-curr-stock">0</strong> un</span>
+              <span style="color: #64748b;">➔</span>
+              <span style="font-size: 14px; font-weight: 700; color: #0284c7;">Novo: <span id="preview-new-stock">0</span> un</span>
+              <span id="preview-diff-tag" class="stock-tag in-stock" style="font-size: 11px;">0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Opção de Sincronização com Nuvemshop -->
+        <div style="background: #f8fafc; border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 14px;">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; font-weight: 500; margin-bottom: 0;">
+            <input type="checkbox" id="stock-sync-nuvemshop-check" checked style="width: 17px; height: 17px; cursor: pointer;">
+            <span>Sincronizar imediatamente na Nuvemshop (se o produto existir na loja)</span>
+          </label>
+          <small style="display: block; color: var(--text-muted); font-size: 11px; margin-top: 4px; padding-left: 25px;">
+            Se o produto não estiver cadastrado na Nuvemshop, o estoque será atualizado apenas no PDV eGestor sem erros.
+          </small>
+        </div>
+
+        <!-- Feedback Box -->
+        <div id="stock-modal-status-box" style="display: none; padding: 12px; border-radius: var(--radius-sm); font-size: 13px; margin-bottom: 10px;"></div>
+      </div>
+    </div>
+
+    <div class="modal-footer" style="margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 10px;">
+      <button type="button" class="btn btn-secondary" onclick="closeAdjustStockModal()">Cancelar</button>
+      <button type="button" class="btn btn-primary" id="btn-save-adjust-stock" onclick="submitAdjustStock()" style="background: #0284c7; border-color: #0284c7;" disabled>
+        💾 Salvar no eGestor
+      </button>
     </div>
   </div>
 </div>

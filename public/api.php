@@ -528,6 +528,180 @@ try {
             }
             break;
 
+        case 'get_egestor_product':
+            // Busca detalhes em tempo real de um produto no eGestor e seu status na Nuvemshop
+            $searchCode = trim($_GET['codigo'] ?? $_POST['codigo'] ?? '');
+            if ($searchCode === '') {
+                echo json_encode(['success' => false, 'error' => 'Código ou SKU do produto não informado.']);
+                exit;
+            }
+
+            $egProduct = null;
+            if (is_numeric($searchCode)) {
+                $pRes = $egestor->getProduct((int)$searchCode);
+                if ($pRes['success'] && !empty($pRes['data'])) {
+                    $egProduct = $pRes['data'];
+                }
+            }
+
+            if (!$egProduct) {
+                // Tenta buscar por SKU / codigoProprio ou nome
+                $sRes = $egestor->getProducts(1, 10, ['filtro' => $searchCode]);
+                if ($sRes['success'] && !empty($sRes['data'])) {
+                    foreach ($sRes['data'] as $cand) {
+                        $cProprio = (string)($cand['codigoProprio'] ?? '');
+                        $cCod = (string)($cand['codigo'] ?? '');
+                        $cBar = (string)($cand['codigoBarras'] ?? '');
+                        if ($cProprio === $searchCode || $cCod === $searchCode || $cBar === $searchCode) {
+                            $egProduct = $cand;
+                            break;
+                        }
+                    }
+                    if (!$egProduct && !empty($sRes['data'][0])) {
+                        $egProduct = $sRes['data'][0];
+                    }
+                }
+            }
+
+            if (!$egProduct) {
+                echo json_encode(['success' => false, 'error' => "Produto '{$searchCode}' não encontrado no eGestor."]);
+                exit;
+            }
+
+            $cod = (string)($egProduct['codigo'] ?? '');
+            $sku = trim((string)($egProduct['codigoProprio'] ?? ''));
+            $barcode = trim((string)($egProduct['codigoBarras'] ?? $egProduct['refEanGtin'] ?? ''));
+            $name = trim((string)($egProduct['descricao'] ?? $egProduct['nome'] ?? ''));
+            $stock = (float)($egProduct['estoque'] ?? 0);
+            $price = (float)($egProduct['precoVenda'] ?? $egProduct['valorVenda'] ?? 0);
+
+            // Verifica se está na Nuvemshop
+            $nuvemIndex = $syncService->getNuvemshopProductsIndex();
+            $nuvemMatch = null;
+            if ($sku !== '' && isset($nuvemIndex['by_sku'][$sku])) {
+                $nuvemMatch = $nuvemIndex['by_sku'][$sku];
+            } elseif ($barcode !== '' && isset($nuvemIndex['by_barcode'][$barcode])) {
+                $nuvemMatch = $nuvemIndex['by_barcode'][$barcode];
+            } elseif ($cod !== '' && isset($nuvemIndex['by_sku'][$cod])) {
+                $nuvemMatch = $nuvemIndex['by_sku'][$cod];
+            }
+
+            // Fallback se não estiver no índice em memória
+            if (!$nuvemMatch && $sku !== '') {
+                $findRes = $nuvemshop->findProductVariantBySku($sku);
+                if (!$findRes && $cod !== '' && $cod !== $sku) {
+                    $findRes = $nuvemshop->findProductVariantBySku($cod);
+                }
+                if ($findRes) {
+                    $nuvemMatch = [
+                        'product_id' => $findRes['product']['id'],
+                        'variant_id' => $findRes['variant']['id'],
+                        'stock' => (float)($findRes['variant']['stock'] ?? 0),
+                        'price' => (float)($findRes['variant']['price'] ?? 0)
+                    ];
+                }
+            }
+
+            echo json_encode([
+                'success' => true,
+                'product' => [
+                    'codigo' => (int)$cod,
+                    'sku' => $sku,
+                    'barcode' => $barcode,
+                    'nome' => $name,
+                    'estoque' => $stock,
+                    'preco' => $price,
+                    'in_nuvemshop' => !empty($nuvemMatch),
+                    'nuvemshop_stock' => $nuvemMatch ? (float)($nuvemMatch['stock'] ?? 0) : null,
+                    'nuvemshop_product_id' => $nuvemMatch['product_id'] ?? null,
+                    'nuvemshop_variant_id' => $nuvemMatch['variant_id'] ?? null
+                ]
+            ]);
+            break;
+
+        case 'adjust_egestor_stock':
+            // Manipula diretamente o estoque de um produto no eGestor e sincroniza na Nuvemshop
+            $rawInput = json_decode(file_get_contents('php://input'), true);
+            $codigo = (int)($_POST['codigo'] ?? $rawInput['codigo'] ?? 0);
+            $type = trim((string)($_POST['type'] ?? $rawInput['type'] ?? 'set')); // 'set', 'add', 'sub'
+            $val = (float)($_POST['value'] ?? $rawInput['value'] ?? 0);
+            $syncNuvem = filter_var($_POST['sync_nuvem'] ?? $rawInput['sync_nuvem'] ?? true, FILTER_VALIDATE_BOOLEAN);
+
+            if ($codigo <= 0) {
+                echo json_encode(['success' => false, 'error' => 'Código do produto inválido ou não informado.']);
+                exit;
+            }
+
+            // Obter produto atual no eGestor
+            $prodRes = $egestor->getProduct($codigo);
+            if (!$prodRes['success'] || empty($prodRes['data'])) {
+                echo json_encode(['success' => false, 'error' => "Produto #{$codigo} não encontrado no eGestor."]);
+                exit;
+            }
+
+            $currentStock = (float)($prodRes['data']['estoque'] ?? 0);
+            $newStock = $currentStock;
+
+            if ($type === 'set') {
+                $newStock = max(0, $val);
+            } elseif ($type === 'add') {
+                $newStock = max(0, $currentStock + $val);
+            } elseif ($type === 'sub') {
+                $newStock = max(0, $currentStock - $val);
+            } else {
+                echo json_encode(['success' => false, 'error' => 'Tipo de operação de estoque inválida.']);
+                exit;
+            }
+
+            // Atualiza o estoque no eGestor via PUT /produtos/{codigo}
+            $updateRes = $egestor->updateProductStock($codigo, $newStock);
+            if (!$updateRes['success']) {
+                echo json_encode([
+                    'success' => false,
+                    'error' => 'Falha ao atualizar estoque no eGestor: ' . ($updateRes['error'] ?? 'Erro desconhecido')
+                ]);
+                exit;
+            }
+
+            $prodName = $prodRes['data']['descricao'] ?? $prodRes['data']['nome'] ?? "Produto #{$codigo}";
+            $syncResult = null;
+
+            // Se solicitado, sincroniza imediatamente com a Nuvemshop
+            if ($syncNuvem) {
+                $syncResult = $syncService->syncProductFromEGestor((string)$codigo, 'manual_stock_adjustment', false);
+            }
+
+            $nuvemInfo = "";
+            if ($syncResult) {
+                if (!empty($syncResult['success'])) {
+                    if (!empty($syncResult['skipped'])) {
+                        $nuvemInfo = " (Não publicado na Nuvemshop - sem impacto na loja)";
+                    } else {
+                        $nuvemInfo = " (Sincronizado na Nuvemshop com sucesso)";
+                    }
+                } else {
+                    $nuvemInfo = " (Aviso Nuvemshop: " . ($syncResult['error'] ?? 'falha de sync') . ")";
+                }
+            }
+
+            Database::logSync(
+                'manual',
+                'stock_adjustment',
+                (string)$codigo,
+                "Ajuste manual de estoque no eGestor para '{$prodName}': {$currentStock} -> {$newStock}{$nuvemInfo}",
+                'success'
+            );
+
+            echo json_encode([
+                'success' => true,
+                'codigo' => $codigo,
+                'name' => $prodName,
+                'previous_stock' => $currentStock,
+                'new_stock' => $newStock,
+                'sync_nuvemshop' => $syncResult
+            ]);
+            break;
+
         default:
             echo json_encode(['success' => false, 'error' => 'Ação inválida']);
     }
